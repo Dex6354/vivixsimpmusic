@@ -14,39 +14,52 @@ SETTINGS_FILE = "settings.preferences_pb"
 
 st.title("📂 Gerador de base: Music Database")
 
-vivi_file = st.file_uploader("Importe o arquivo vivi.db", type=["db"])
+# Upload do arquivo .backup (que internamente é um ZIP com song.db)
+vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
 if vivi_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix="_vivi.db") as tmp_v:
-        tmp_v.write(vivi_file.read())
-        path_vivi = tmp_v.name
+    # Criamos um diretório temporário para processar os arquivos internos
+    proc_dir = tempfile.mkdtemp()
+    path_vivi_backup = os.path.join(proc_dir, "vivi_upload.backup")
+    path_song_db = os.path.join(proc_dir, "song.db")
+
+    with open(path_vivi_backup, "wb") as f:
+        f.write(vivi_file.read())
 
     try:
-        # 1. Extrair IDs do vivi.db
-        conn_v = sqlite3.connect(path_vivi)
+        # 1. Abrir o ZIP (.backup) e extrair apenas o song.db
+        with zipfile.ZipFile(path_vivi_backup, 'r') as z:
+            # Verifica se song.db existe dentro do backup
+            if "song.db" in z.namelist():
+                z.extract("song.db", proc_dir)
+            else:
+                st.error("Arquivo 'song.db' não encontrado dentro do backup.")
+                st.stop()
+
+        # 2. Extrair IDs do song.db extraído
+        conn_v = sqlite3.connect(path_song_db)
+        # Note: Ajustei o nome da tabela para 'playlist_song_map' conforme seu código anterior
         query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
         df_ids = pd.read_sql_query(query, conn_v)
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo de origem.")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo song.db.")
 
-        # Verificação de arquivos na raiz
+        # Verificação de arquivos na raiz para a montagem do novo arquivo
         if not os.path.exists(BASE_SIMP):
             st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
         elif not os.path.exists(SETTINGS_FILE):
             st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
         else:
-            # 2. Preparar pasta temporária
-            temp_dir = tempfile.mkdtemp()
+            # 3. Preparar o novo arquivo "Music Database"
             db_output_name = "Music Database"
-            db_output_path = os.path.join(temp_dir, db_output_name)
+            db_output_path = os.path.join(proc_dir, db_output_name)
             
-            # Copia o banco original para o novo nome (sem .db)
             shutil.copy2(BASE_SIMP, db_output_path)
 
             try:
-                # Processamento do SQL
+                # Processamento do SQL no novo banco
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
                 cursor.execute("DELETE FROM pair_song_local_playlist")
@@ -64,16 +77,14 @@ if vivi_file:
                 total_final = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 3. Criar o arquivo de backup (formato zip com extensão .backup)
-                backup_path = os.path.join(temp_dir, "simpmusic.backup")
-                with zipfile.ZipFile(backup_path, 'w') as zipf:
-                    # Adiciona o banco gerado
+                # 4. Criar o pacote final .backup (contendo Music Database e settings.preferences_pb)
+                final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
+                with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
-                    # Adiciona o arquivo de preferências da raiz
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
-                # 4. Botão de Download
-                with open(backup_path, "rb") as f:
+                # 5. Botão de Download
+                with open(final_backup_path, "rb") as f:
                     backup_data = f.read()
                 
                 st.divider()
@@ -88,12 +99,9 @@ if vivi_file:
 
             except Exception as e:
                 st.error(f"Erro ao processar banco de dados: {e}")
-            finally:
-                # Limpa a pasta temporária
-                shutil.rmtree(temp_dir, ignore_errors=True)
-
+            
     except Exception as e:
-        st.error(f"Erro ao ler vivi.db: {e}")
+        st.error(f"Erro ao processar o arquivo enviado: {e}")
     finally:
-        if os.path.exists(path_vivi):
-            os.remove(path_vivi)
+        # Limpa todos os arquivos temporários criados no diretório proc_dir
+        shutil.rmtree(proc_dir, ignore_errors=True)
