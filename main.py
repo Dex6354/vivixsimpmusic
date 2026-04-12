@@ -7,12 +7,12 @@ import shutil
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# O arquivo simpmusic.db original (com todos os dados) deve estar na mesma pasta do script
+# O arquivo simpmusic.db original deve estar na mesma pasta do script
 BASE_SIMP = "simpmusic.db"
 
-st.title("📂 Gerador de base: Music Database")
+st.title("📂 Gerador: Music Database.db")
 
-vivi_file = st.file_uploader("Importe o arquivo vivi.db", type=["db"])
+vivi_file = st.file_uploader("1. Importe o arquivo vivi.db", type=["db"])
 
 if vivi_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix="_vivi.db") as tmp_v:
@@ -20,59 +20,63 @@ if vivi_file:
         path_vivi = tmp_v.name
 
     try:
-        # 1. Extrair IDs do vivi.db mantendo a ordem original
+        # 1. Extrair IDs do vivi.db mantendo a ordem
         conn_v = sqlite3.connect(path_vivi)
         query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
         df_ids = pd.read_sql_query(query, conn_v)
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.info(f"🔍 {len(lista_ids)} IDs lidos do arquivo de origem.")
+        st.info(f"🔍 {len(lista_ids)} IDs lidos do vivi.db")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
+            st.error(f"Arquivo '{BASE_SIMP}' não encontrado na pasta do script.")
         else:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
                 output_path = tmp_out.name
             
+            # Copia integral do arquivo original (23 tabelas e dados)
             shutil.copy2(BASE_SIMP, output_path)
 
             try:
                 conn_out = sqlite3.connect(output_path)
                 cursor = conn_out.cursor()
 
-                # 2. Garantir que os IDs existam na tabela 'song' (obrigatório para o app mostrar)
-                # Inserimos com valores genéricos para não dar erro de NOT NULL
-                for s_id in lista_ids:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO song (id, title, duration, liked, totalPlayTime, isLocal) 
+                # 2. Descobrir o nome da coluna de ID na tabela 'song'
+                cursor.execute("PRAGMA table_info(song)")
+                colunas_song = [col[1] for col in cursor.fetchall()]
+                # Tenta 'id', se não 'songId', se não a primeira coluna
+                id_col_name = 'id' if 'id' in colunas_song else ('songId' if 'songId' in colunas_song else colunas_song[0])
+
+                # 3. Limpar dados antigos da playlist para evitar conflitos
+                cursor.execute("DELETE FROM pair_song_local_playlist")
+
+                # 4. Inserir IDs nas duas tabelas necessárias
+                for i, s_id in enumerate(lista_ids):
+                    # Insere na tabela de músicas (metadados mínimos)
+                    cursor.execute(f"""
+                        INSERT OR IGNORE INTO song ({id_col_name}, title, duration, liked, totalPlayTime, isLocal) 
                         VALUES (?, ?, 0, 0, 0, 0)
                     """, (s_id, "Música Importada"))
-
-                # 3. Limpar a playlist atual e inserir a nova sequência
-                cursor.execute("DELETE FROM pair_song_local_playlist")
-                
-                dados_playlist = []
-                for i, s_id in enumerate(lista_ids):
-                    # Usando playlistId 1 e a posição sequencial
-                    dados_playlist.append((s_id, 1, i))
-
-                cursor.executemany(
-                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
-                    dados_playlist
-                )
+                    
+                    # Insere na tabela de playlist vinculada
+                    cursor.execute("""
+                        INSERT INTO pair_song_local_playlist (songId, playlistId, position) 
+                        VALUES (?, 1, ?)
+                    """, (s_id, i))
                 
                 conn_out.commit()
                 
-                # Verificação
+                # Verificação final
                 cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
                 check_count = cursor.fetchone()[0]
                 conn_out.close()
 
+                # 5. Download automático do arquivo processado
                 with open(output_path, "rb") as f:
                     file_data = f.read()
                 
-                st.success(f"✅ Sucesso! {check_count} músicas prontas para download.")
+                st.success(f"✅ Sucesso! {check_count} IDs incluídos no Music Database.db")
                 
                 st.download_button(
                     label="📥 BAIXAR MUSIC DATABASE",
@@ -87,6 +91,6 @@ if vivi_file:
                 if os.path.exists(output_path): os.remove(output_path)
 
     except Exception as e:
-        st.error(f"Erro no vivi.db: {e}")
+        st.error(f"Erro no processamento: {e}")
     finally:
         if os.path.exists(path_vivi): os.remove(path_vivi)
