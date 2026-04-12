@@ -7,7 +7,7 @@ import shutil
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# O arquivo simpmusic.db original (com todos os dados) deve estar na mesma pasta do script
+# O arquivo simpmusic.db original deve estar na mesma pasta do script
 BASE_SIMP = "simpmusic.db"
 
 st.title("📂 Gerador de base: Music Database")
@@ -36,21 +36,21 @@ if vivi_file:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
                 output_path = tmp_out.name
             
-            # Copia integral do arquivo original (23 tabelas + dados)
+            # Copia integral do arquivo original
             shutil.copy2(BASE_SIMP, output_path)
 
             try:
                 conn_out = sqlite3.connect(output_path)
                 cursor = conn_out.cursor()
 
-                # 3. Inserção com preenchimento de colunas obrigatórias
-                # Usamos songId, playlistId (1) e position (índice da lista)
-                dados_insercao = []
-                for i, s_id in enumerate(lista_ids):
-                    dados_insercao.append((s_id, 1, i))
+                # Limpa a tabela destino para evitar conflitos de duplicidade/ID
+                cursor.execute("DELETE FROM pair_song_local_playlist")
+
+                # 3. Inserção dos novos dados
+                dados_insercao = [(s_id, 1, i) for i, s_id in enumerate(lista_ids)]
 
                 cursor.executemany(
-                    "INSERT OR IGNORE INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
+                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
                     dados_insercao
                 )
                 
@@ -61,7 +61,7 @@ if vivi_file:
                 total_final = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 4. Botão de Download
+                # 4. Preparação do Download
                 with open(output_path, "rb") as f:
                     file_data = f.read()
                 
@@ -76,7 +76,7 @@ if vivi_file:
                 )
 
             except Exception as e:
-                st.error(f"Erro ao inserir dados na estrutura: {e}")
+                st.error(f"Erro ao processar banco de dados: {e}")
             finally:
                 if os.path.exists(output_path):
                     os.remove(output_path)
