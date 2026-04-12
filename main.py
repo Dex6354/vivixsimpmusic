@@ -3,24 +3,15 @@ import sqlite3
 import tempfile
 import pandas as pd
 import os
+import shutil
 
-st.set_page_config(page_title="SimpMusic Full Generator", layout="wide")
+st.set_page_config(page_title="SimpMusic Merger", layout="wide")
 
-# O arquivo original simpmusic.db deve estar na mesma pasta do script para servir de molde
+# O arquivo simpmusic.db original (com todos os dados) deve estar na mesma pasta
 BASE_SIMP = "simpmusic.db"
 
-st.title("📂 Gerador Completo SimpMusic")
-st.write("Extrai IDs do 'vivi.db' e gera um 'simpmusic.db' com a estrutura completa (23 tabelas).")
-
-def get_full_schema(db_path):
-    """Extrai todos os comandos de criação do banco original"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    # Pega o SQL de criação de todas as tabelas, índices e triggers
-    cursor.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")
-    schemas = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return schemas
+st.title("📂 Atualização de Banco de Dados")
+st.write("Mantém todos os dados do SimpMusic e adiciona os IDs do Vivi.")
 
 vivi_file = st.file_uploader("1. Importe o arquivo vivi.db", type=["db"])
 
@@ -30,7 +21,7 @@ if vivi_file:
         path_vivi = tmp_v.name
 
     try:
-        # Extrair IDs do vivi.db
+        # 1. Extrair os IDs do vivi.db mantendo a ordem
         conn_v = sqlite3.connect(path_vivi)
         query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
         df_ids = pd.read_sql_query(query, conn_v)
@@ -39,53 +30,51 @@ if vivi_file:
         st.subheader("IDs capturados da origem")
         st.dataframe(df_ids, use_container_width=True)
 
-        if st.button("🚀 Gerar simpmusic.db Completo"):
+        if st.button("🚀 Gerar simpmusic.db Atualizado"):
             if not os.path.exists(BASE_SIMP):
-                st.error(f"Erro: O arquivo '{BASE_SIMP}' (molde) não foi encontrado na pasta.")
+                st.error(f"Erro: O arquivo base '{BASE_SIMP}' não foi encontrado na pasta do script.")
             else:
-                # 1. Obter o Schema original
-                schemas = get_full_schema(BASE_SIMP)
-
-                # 2. Criar novo banco temporário
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_s:
-                    path_output = tmp_s.name
-
-                conn_out = sqlite3.connect(path_output)
-                cursor_out = conn_out.cursor()
-
-                # 3. Replicar todas as 23 tabelas e estruturas
-                for statement in schemas:
-                    try:
-                        cursor_out.execute(statement)
-                    except:
-                        continue # Ignora erros de tabelas que já possam existir
+                # 2. Criar uma cópia física completa do simpmusic.db original
+                # Isso garante que todas as 23 tabelas e seus dados permaneçam intactos
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
+                    output_path = tmp_out.name
                 
-                # 4. Inserir os dados na tabela alvo
-                ids_to_insert = [(row['songId'], 1) for _, row in df_ids.iterrows()]
-                
+                shutil.copy2(BASE_SIMP, output_path)
+
                 try:
-                    cursor_out.executemany(
+                    conn_out = sqlite3.connect(output_path)
+                    cursor = conn_out.cursor()
+
+                    # 3. Inserir apenas os novos IDs na tabela solicitada
+                    # playlistId 1 é usado como padrão para as músicas aparecerem
+                    ids_to_insert = [(row['songId'], 1) for _, row in df_ids.iterrows()]
+                    
+                    cursor.executemany(
                         "INSERT OR IGNORE INTO pair_song_local_playlist (songId, playlistId) VALUES (?, ?)", 
                         ids_to_insert
                     )
+                    
                     conn_out.commit()
-                    st.success(f"Arquivo gerado com sucesso com todas as tabelas originais!")
+                    conn_out.close()
 
-                    # 5. Download
-                    with open(path_output, "rb") as f:
+                    # 4. Oferecer para download o arquivo que é uma cópia do original + novos IDs
+                    with open(output_path, "rb") as f:
                         st.download_button(
                             label="📥 BAIXAR simpmusic.db COMPLETO",
                             data=f,
                             file_name="simpmusic.db",
                             mime="application/octet-stream"
                         )
+                    st.success("Sucesso! Os IDs foram mesclados ao seu arquivo original.")
+
                 except Exception as e:
                     st.error(f"Erro ao inserir dados: {e}")
                 finally:
-                    conn_out.close()
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
 
     except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+        st.error(f"Erro ao ler vivi.db: {e}")
     finally:
         if os.path.exists(path_vivi):
             os.remove(path_vivi)
