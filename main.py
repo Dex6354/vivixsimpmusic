@@ -27,46 +27,52 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo de origem.")
+        st.info(f"🔍 {len(lista_ids)} IDs lidos do arquivo de origem.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na pasta do script.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
         else:
-            # 2. Preparar o arquivo de saída
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
                 output_path = tmp_out.name
             
-            # Copia integral do arquivo original (23 tabelas + dados)
             shutil.copy2(BASE_SIMP, output_path)
 
             try:
                 conn_out = sqlite3.connect(output_path)
                 cursor = conn_out.cursor()
 
-                # 3. Inserção com preenchimento de colunas obrigatórias
-                # Usamos songId, playlistId (1) e position (índice da lista)
-                dados_insercao = []
+                # 2. Garantir que os IDs existam na tabela 'song' (obrigatório para o app mostrar)
+                # Inserimos com valores genéricos para não dar erro de NOT NULL
+                for s_id in lista_ids:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO song (id, title, duration, liked, totalPlayTime, isLocal) 
+                        VALUES (?, ?, 0, 0, 0, 0)
+                    """, (s_id, "Música Importada"))
+
+                # 3. Limpar a playlist atual e inserir a nova sequência
+                cursor.execute("DELETE FROM pair_song_local_playlist")
+                
+                dados_playlist = []
                 for i, s_id in enumerate(lista_ids):
-                    dados_insercao.append((s_id, 1, i))
+                    # Usando playlistId 1 e a posição sequencial
+                    dados_playlist.append((s_id, 1, i))
 
                 cursor.executemany(
-                    "INSERT OR IGNORE INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
-                    dados_insercao
+                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
+                    dados_playlist
                 )
                 
                 conn_out.commit()
                 
-                # Verificação interna
+                # Verificação
                 cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
-                total_final = cursor.fetchone()[0]
+                check_count = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 4. Botão de Download
                 with open(output_path, "rb") as f:
                     file_data = f.read()
                 
-                st.divider()
-                st.write(f"📊 Total de registros na tabela destino após união: {total_final}")
+                st.success(f"✅ Sucesso! {check_count} músicas prontas para download.")
                 
                 st.download_button(
                     label="📥 BAIXAR MUSIC DATABASE",
@@ -76,13 +82,11 @@ if vivi_file:
                 )
 
             except Exception as e:
-                st.error(f"Erro ao inserir dados na estrutura: {e}")
+                st.error(f"Erro na gravação: {e}")
             finally:
-                if os.path.exists(output_path):
-                    os.remove(output_path)
+                if os.path.exists(output_path): os.remove(output_path)
 
     except Exception as e:
-        st.error(f"Erro ao ler vivi.db: {e}")
+        st.error(f"Erro no vivi.db: {e}")
     finally:
-        if os.path.exists(path_vivi):
-            os.remove(path_vivi)
+        if os.path.exists(path_vivi): os.remove(path_vivi)
