@@ -8,7 +8,7 @@ import zipfile
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# Arquivos necessários
+# Arquivos necessários na raiz do projeto
 BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
@@ -37,7 +37,7 @@ if vivi_file:
         elif not os.path.exists(SETTINGS_FILE):
             st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
         else:
-            # 2. Preparar pasta temporária para o ZIP
+            # 2. Preparar pasta temporária
             temp_dir = tempfile.mkdtemp()
             db_output_name = "Music Database"
             db_output_path = os.path.join(temp_dir, db_output_name)
@@ -64,26 +64,26 @@ if vivi_file:
                 total_final = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 3. Criar o arquivo ZIP
-                zip_path = os.path.join(temp_dir, "simpmusic.zip")
-                with zipfile.ZipFile(zip_path, 'w') as zipf:
+                # 3. Criar o arquivo de backup (formato zip com extensão .backup)
+                backup_path = os.path.join(temp_dir, "simpmusic.backup")
+                with zipfile.ZipFile(backup_path, 'w') as zipf:
                     # Adiciona o banco gerado
                     zipf.write(db_output_path, arcname=db_output_name)
                     # Adiciona o arquivo de preferências da raiz
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
                 # 4. Botão de Download
-                with open(zip_path, "rb") as f:
-                    zip_data = f.read()
+                with open(backup_path, "rb") as f:
+                    backup_data = f.read()
                 
                 st.divider()
                 st.write(f"📊 Total de registros na tabela destino: {total_final}")
                 
                 st.download_button(
-                    label="📥 BAIXAR SIMPMUSIC.ZIP",
-                    data=zip_data,
-                    file_name="simpmusic.zip",
-                    mime="application/zip"
+                    label="📥 BAIXAR SIMPMUSIC.BACKUP",
+                    data=backup_data,
+                    file_name="simpmusic.backup",
+                    mime="application/octet-stream"
                 )
 
             except Exception as e:
