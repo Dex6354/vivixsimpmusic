@@ -4,6 +4,7 @@ import tempfile
 import pandas as pd
 import os
 import shutil
+import time
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
@@ -36,37 +37,45 @@ if vivi_file:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
                 output_path = tmp_out.name
             
-            # Copia integral do arquivo original
             shutil.copy2(BASE_SIMP, output_path)
 
             try:
                 conn_out = sqlite3.connect(output_path)
                 cursor = conn_out.cursor()
 
-                # Limpa a tabela destino para evitar conflitos de duplicidade/ID
+                # Limpa a tabela destino para evitar conflitos
                 cursor.execute("DELETE FROM pair_song_local_playlist")
 
-                # 3. Inserção dos novos dados
-                dados_insercao = [(s_id, 1, i) for i, s_id in enumerate(lista_ids)]
+                # 3. Inserção com todas as colunas obrigatórias
+                # Usando o valor de inPlaylist informado (1775992825264)
+                val_in_playlist = 1775992825264
+                
+                dados_insercao = []
+                for i, s_id in enumerate(lista_ids):
+                    # Estrutura: songId, playlistId, position, inPlaylist
+                    dados_insercao.append((s_id, 1, i, val_in_playlist))
 
                 cursor.executemany(
-                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
+                    """
+                    INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) 
+                    VALUES (?, ?, ?, ?)
+                    """, 
                     dados_insercao
                 )
                 
                 conn_out.commit()
                 
-                # Verificação interna
+                # Verificação final
                 cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
                 total_final = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 4. Preparação do Download
+                # 4. Botão de Download
                 with open(output_path, "rb") as f:
                     file_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total de registros na tabela destino após união: {total_final}")
+                st.write(f"📊 Total de registros na tabela destino: {total_final}")
                 
                 st.download_button(
                     label="📥 BAIXAR MUSIC DATABASE",
