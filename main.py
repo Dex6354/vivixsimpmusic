@@ -4,12 +4,13 @@ import tempfile
 import pandas as pd
 import os
 import shutil
-import time
+import zipfile
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# O arquivo simpmusic.db original deve estar na mesma pasta do script
+# Arquivos necessários
 BASE_SIMP = "simpmusic.db"
+SETTINGS_FILE = "settings.preferences_pb"
 
 st.title("📂 Gerador de base: Music Database")
 
@@ -21,7 +22,7 @@ if vivi_file:
         path_vivi = tmp_v.name
 
     try:
-        # 1. Extrair IDs do vivi.db mantendo a ordem original
+        # 1. Extrair IDs do vivi.db
         conn_v = sqlite3.connect(path_vivi)
         query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
         df_ids = pd.read_sql_query(query, conn_v)
@@ -30,65 +31,66 @@ if vivi_file:
         lista_ids = df_ids['songId'].tolist()
         st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo de origem.")
 
+        # Verificação de arquivos na raiz
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na pasta do script.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
+        elif not os.path.exists(SETTINGS_FILE):
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
         else:
-            # 2. Preparar o arquivo de saída
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
-                output_path = tmp_out.name
+            # 2. Preparar pasta temporária para o ZIP
+            temp_dir = tempfile.mkdtemp()
+            db_output_name = "Music Database"
+            db_output_path = os.path.join(temp_dir, db_output_name)
             
-            shutil.copy2(BASE_SIMP, output_path)
+            # Copia o banco original para o novo nome (sem .db)
+            shutil.copy2(BASE_SIMP, db_output_path)
 
             try:
-                conn_out = sqlite3.connect(output_path)
+                # Processamento do SQL
+                conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
-
-                # Limpa a tabela destino para evitar conflitos
                 cursor.execute("DELETE FROM pair_song_local_playlist")
 
-                # 3. Inserção com todas as colunas obrigatórias
-                # Usando o valor de inPlaylist informado (1775992825264)
                 val_in_playlist = 1775992825264
-                
-                dados_insercao = []
-                for i, s_id in enumerate(lista_ids):
-                    # Estrutura: songId, playlistId, position, inPlaylist
-                    dados_insercao.append((s_id, 1, i, val_in_playlist))
+                dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
 
                 cursor.executemany(
-                    """
-                    INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) 
-                    VALUES (?, ?, ?, ?)
-                    """, 
+                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
                     dados_insercao
                 )
-                
                 conn_out.commit()
                 
-                # Verificação final
                 cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
                 total_final = cursor.fetchone()[0]
                 conn_out.close()
 
+                # 3. Criar o arquivo ZIP
+                zip_path = os.path.join(temp_dir, "simpmusic.zip")
+                with zipfile.ZipFile(zip_path, 'w') as zipf:
+                    # Adiciona o banco gerado
+                    zipf.write(db_output_path, arcname=db_output_name)
+                    # Adiciona o arquivo de preferências da raiz
+                    zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
+
                 # 4. Botão de Download
-                with open(output_path, "rb") as f:
-                    file_data = f.read()
+                with open(zip_path, "rb") as f:
+                    zip_data = f.read()
                 
                 st.divider()
                 st.write(f"📊 Total de registros na tabela destino: {total_final}")
                 
                 st.download_button(
-                    label="📥 BAIXAR MUSIC DATABASE",
-                    data=file_data,
-                    file_name="Music Database.db",
-                    mime="application/octet-stream"
+                    label="📥 BAIXAR SIMPMUSIC.ZIP",
+                    data=zip_data,
+                    file_name="simpmusic.zip",
+                    mime="application/zip"
                 )
 
             except Exception as e:
                 st.error(f"Erro ao processar banco de dados: {e}")
             finally:
-                if os.path.exists(output_path):
-                    os.remove(output_path)
+                # Limpa a pasta temporária
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
         st.error(f"Erro ao ler vivi.db: {e}")
