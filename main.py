@@ -12,7 +12,6 @@ BASE_SIMP = "simpmusic.db"
 
 st.title("📂 Gerador de base: Music Database")
 
-# 1. Upload do arquivo de origem
 vivi_file = st.file_uploader("Importe o arquivo vivi.db", type=["db"])
 
 if vivi_file:
@@ -21,46 +20,54 @@ if vivi_file:
         path_vivi = tmp_v.name
 
     try:
-        # Extrair IDs do vivi.db mantendo a ordem original
+        # 1. Extrair IDs do vivi.db mantendo a ordem original
         conn_v = sqlite3.connect(path_vivi)
         query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
         df_ids = pd.read_sql_query(query, conn_v)
         conn_v.close()
 
-        st.subheader("Lista de IDs detectada")
-        st.dataframe(df_ids, use_container_width=True)
+        lista_ids = df_ids['songId'].tolist()
+        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo de origem.")
 
         if not os.path.exists(BASE_SIMP):
             st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na pasta do script.")
         else:
-            # Processamento em memória/temporário
+            # 2. Preparar o arquivo de saída
             with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp_out:
                 output_path = tmp_out.name
             
-            # Copia o arquivo original com todas as 23 tabelas e dados
+            # Copia integral do arquivo original (23 tabelas + dados)
             shutil.copy2(BASE_SIMP, output_path)
 
             try:
                 conn_out = sqlite3.connect(output_path)
                 cursor = conn_out.cursor()
 
-                # Prepara os IDs (associando à playlist 1 para visibilidade no app)
-                ids_to_insert = [(row['songId'], 1) for _, row in df_ids.iterrows()]
-                
-                # Insere os novos IDs na tabela correta da estrutura original
+                # 3. Inserção com preenchimento de colunas obrigatórias
+                # Usamos songId, playlistId (1) e position (índice da lista)
+                dados_insercao = []
+                for i, s_id in enumerate(lista_ids):
+                    dados_insercao.append((s_id, 1, i))
+
                 cursor.executemany(
-                    "INSERT OR IGNORE INTO pair_song_local_playlist (songId, playlistId) VALUES (?, ?)", 
-                    ids_to_insert
+                    "INSERT OR IGNORE INTO pair_song_local_playlist (songId, playlistId, position) VALUES (?, ?, ?)", 
+                    dados_insercao
                 )
                 
                 conn_out.commit()
+                
+                # Verificação interna
+                cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
+                total_final = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 2. Botão de Download com o nome solicitado
+                # 4. Botão de Download
                 with open(output_path, "rb") as f:
                     file_data = f.read()
-                    
-                st.success("Tudo pronto! Clique abaixo para baixar sua nova base.")
+                
+                st.divider()
+                st.write(f"📊 Total de registros na tabela destino após união: {total_final}")
+                
                 st.download_button(
                     label="📥 BAIXAR MUSIC DATABASE",
                     data=file_data,
@@ -69,7 +76,7 @@ if vivi_file:
                 )
 
             except Exception as e:
-                st.error(f"Erro ao processar dados: {e}")
+                st.error(f"Erro ao inserir dados na estrutura: {e}")
             finally:
                 if os.path.exists(output_path):
                     os.remove(output_path)
