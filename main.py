@@ -61,52 +61,45 @@ if vivi_file:
                 
                 for i, v_id in enumerate(lista_ids):
                     alb_id = "" 
-                    dur = 0
-                    tit = "Unknown"
-                    art = "Unknown"
+                    dur, tit, art = 0, "Unknown", "Unknown"
                     
                     try:
-                        # Passo 1: Detalhes básicos
-                        s_det = yt.get_song(v_id)
-                        v_det = s_det.get('videoDetails', {})
-                        tit = v_det.get('title', "Unknown")
-                        art = v_det.get('author', "Unknown")
-                        dur = int(v_det.get('lengthSeconds', 0))
+                        # 1. Tenta obter o objeto da trilha (Mais preciso para Album ID)
+                        track_info = yt.get_song(v_id)
+                        v_details = track_info.get('videoDetails', {})
+                        
+                        tit = v_details.get('title', "Unknown")
+                        art = v_details.get('author', "Unknown")
+                        dur = int(v_details.get('lengthSeconds', 0))
 
-                        # Passo 2: Busca PROFUNDA do albumId (MPREb...)
-                        # O watch_playlist traz o contexto do álbum onde a música está inserida
-                        watch_next = yt.get_watch_playlist(v_id)
+                        # 2. Busca o albumId MPREb...
+                        # Tentativa A: Através do watch_playlist (simula o player)
+                        watch_data = yt.get_watch_playlist(v_id)
+                        if 'tracks' in watch_data and len(watch_data['tracks']) > 0:
+                            alb_id = watch_data['tracks'][0].get('album', {}).get('id', "")
                         
-                        # Tenta extrair o browseId do álbum dos metadados da 'playlist' de reprodução
-                        if 'tracks' in watch_next and len(watch_next['tracks']) > 0:
-                            # Pega o browseId do álbum da primeira faixa (que é a própria música)
-                            alb_id = watch_next['tracks'][0].get('album', {}).get('id', "")
-                        
-                        # Backup: se ainda estiver vazio, tenta o método padrão
+                        # Tentativa B: Fallback se A falhar
                         if not alb_id:
-                            alb_id = v_det.get('albumId', "")
+                            alb_id = v_details.get('albumId', "")
                     except:
                         pass
                     
                     dados_completos_song.append({
                         'videoId': v_id,
-                        'albumId': alb_id if alb_id else "NÃO ENCONTRADO",
+                        'albumId': alb_id if alb_id else "--- VAZIO ---",
                         'title': tit,
                         'artist': art,
                         'duration': dur
                     })
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER FOCADO ---
+                # --- DEBUGGER FOCADO EM ALBUMID ---
                 st.divider()
-                st.subheader("🐞 Debugger: Foco no Album ID")
+                st.subheader("🐞 Debugger: Verificação de IDs")
                 df_debug = pd.DataFrame(dados_completos_song)
                 
-                # Destaca o albumId para conferência rápida
-                st.dataframe(
-                    df_debug[['videoId', 'albumId', 'title', 'artist']], 
-                    use_container_width=True
-                )
+                # Exibe videoId e albumId lado a lado para conferência
+                st.table(df_debug[['videoId', 'albumId', 'title']])
 
                 # --- INSERÇÃO ---
                 tuplas_insercao = [
