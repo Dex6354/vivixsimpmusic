@@ -58,14 +58,11 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
-                # Limpa a tabela completamente
-                cursor.execute("DELETE FROM song")
-                
-                # Insere apenas os IDs capturados na coluna videoId
+                # --- 1. ATUALIZAÇÃO DA TABELA song (videoId) ---
+                # Insere os IDs na tabela song caso não existam
                 dados_song = [(s_id,) for s_id in lista_ids]
                 cursor.executemany(
-                    "INSERT INTO song (videoId) VALUES (?)",
+                    "INSERT OR IGNORE INTO song (videoId) VALUES (?)",
                     dados_song
                 )
 
@@ -88,8 +85,8 @@ if vivi_file:
 
                 conn_out.commit()
                 
-                cursor.execute("SELECT COUNT(*) FROM song")
-                total_songs = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
+                total_final = cursor.fetchone()[0]
                 conn_out.close()
 
                 # 4. Criar o pacote final .backup
@@ -103,8 +100,8 @@ if vivi_file:
                     backup_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total de registros na tabela song: {total_songs}")
-                st.info("✅ Tabela 'song' resetada e populada com os novos IDs.")
+                st.write(f"📊 Total de registros processados: {total_final}")
+                st.info("✅ Tabelas 'song', 'local_playlist' e 'pair_song' atualizadas.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
