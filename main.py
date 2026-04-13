@@ -26,38 +26,40 @@ def format_duration(seconds):
     except:
         return "0:00"
 
-def find_album_id(obj):
-    """Busca recursiva pelo browseId que inicia com MPREb_ (Álbum)"""
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k == "browseId" and isinstance(v, str) and v.startswith("MPREb_"):
-                return v
-            result = find_album_id(v)
-            if result: return result
-    elif isinstance(obj, list):
-        for item in obj:
-            result = find_album_id(item)
-            if result: return result
-    return None
+def find_metadata(obj):
+    """Busca recursiva pelo albumId e artistName no JSON do YTMusic"""
+    album_id = None
+    artist_name = None
 
-def extract_artist(obj):
-    """Busca o nome do artista no campo longBylineText"""
     if isinstance(obj, dict):
+        # Busca Album ID
+        if "browseId" in obj and isinstance(obj["browseId"], str) and obj["browseId"].startswith("MPREb_"):
+            album_id = obj["browseId"]
+        
+        # Busca Artista (longBylineText)
         if "longBylineText" in obj:
             try:
-                return obj["longBylineText"]["runs"][0]["text"]
+                artist_name = obj["longBylineText"]["runs"][0]["text"]
             except (KeyError, IndexError):
                 pass
+
+        # Se encontrou ambos, retorna. Se não, continua cavando
         for v in obj.values():
-            result = extract_artist(v)
-            if result: return result
+            res_album, res_artist = find_metadata(v)
+            if res_album and not album_id: album_id = res_album
+            if res_artist and not artist_name: artist_name = res_artist
+            if album_id and artist_name: break
+            
     elif isinstance(obj, list):
         for item in obj:
-            result = extract_artist(item)
-            if result: return result
-    return None
+            res_album, res_artist = find_metadata(item)
+            if res_album and not album_id: album_id = res_album
+            if res_artist and not artist_name: artist_name = res_artist
+            if album_id and artist_name: break
 
-st.title("📂 Gerador de base: Music Database + Album & Artist")
+    return album_id, artist_name
+
+st.title("📂 Gerador de base: Music Database + Artist & Album")
 
 vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
@@ -77,6 +79,7 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
+        # 1. Extrair dados
         conn_v = sqlite3.connect(path_song_db)
         query = """
             SELECT p.songId, s.duration, s.explicit, s.title, s.thumbnailUrl 
@@ -88,7 +91,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_source['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs e metadados recuperados.")
+        st.success(f"✅ {len(lista_ids)} IDs recuperados.")
 
         if not os.path.exists(BASE_SIMP):
             st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
@@ -109,7 +112,7 @@ if vivi_file:
                 ts_val = 1775992827379
                 dados_song = []
                 
-                st.write("🔍 Extraindo Metadados (Álbum e Artista) via YTMusic...")
+                st.write("🔍 Consultando YTMusic (Artistas e Álbuns)...")
                 progress_bar = st.progress(0)
                 total_rows = len(df_source)
 
@@ -122,17 +125,18 @@ if vivi_file:
                     thumb_url = str(row['thumbnailUrl']) if pd.notna(row['thumbnailUrl']) else None
                     
                     album_id = None
-                    artist_name = None
+                    artist_formatted = None
                     
                     try:
-                        # Uma única chamada para obter ambos os dados
                         response = yt._send_request("next", {"videoId": s_id})
-                        album_id = find_album_id(response)
-                        artist_name = extract_artist(response)
+                        album_id, artist_name = find_metadata(response)
+                        if artist_name:
+                            # Formata como ["Nome do Artista"]
+                            artist_formatted = json.dumps([artist_name], ensure_ascii=False)
                     except:
                         pass
 
-                    # Ordem dos campos para a tabela 'song' do SimpMusic
+                    # Dados para inserção (19 colunas agora com artistName)
                     dados_song.append((
                         s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song",
                         0,          # liked
@@ -145,24 +149,24 @@ if vivi_file:
                         None,       # canvasThumbUrl
                         album_id,   # albumId
                         thumb_url,  # thumbnails
-                        artist_name # artistNames (Adicionado)
+                        artist_formatted # artistName
                     ))
                     
                     progress_bar.progress((index + 1) / total_rows)
                 
-                # Query com 19 parâmetros (incluindo artistNames)
+                # Query atualizada com artistName
                 query_insert = """
                     INSERT INTO song (
                         videoId, duration, durationSeconds, isAvailable, isExplicit, 
                         likeStatus, title, videoType, liked, totalPlayTime, 
                         downloadState, favoriteAt, downloadedAt, inLibrary, 
-                        canvasUrl, canvasThumbUrl, albumId, thumbnails, artistNames
+                        canvasUrl, canvasThumbUrl, albumId, thumbnails, artistName
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 
                 cursor.executemany(query_insert, dados_song)
 
-                # Atualização das tabelas de playlist
+                # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
@@ -171,12 +175,14 @@ if vivi_file:
                     dados_insercao
                 )
 
+                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
                 cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
                 conn_out.commit()
                 conn_out.close()
 
+                # 4. Criar o pacote final .backup
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
