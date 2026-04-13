@@ -75,8 +75,10 @@ if vivi_file:
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: 
-                # videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title, videoType
+                # Timestamp solicitado
+                ts_val = 1775992827379
+                
+                # Preparar dados para inserção com as novas colunas
                 dados_song = []
                 for _, row in df_source.iterrows():
                     s_id = row['songId']
@@ -85,13 +87,28 @@ if vivi_file:
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
                     
-                    # Adicionado "Song" para videoType
-                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song"))
+                    dados_song.append((
+                        s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song",
+                        0,      # liked
+                        0,      # totalPlayTime
+                        0,      # downloadState
+                        ts_val, # favoriteAt
+                        ts_val, # downloadedAt
+                        ts_val, # inLibrary
+                        None,   # canvasUrl
+                        None    # canvasThumbUrl
+                    ))
                 
-                cursor.executemany(
-                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title, videoType) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    dados_song
-                )
+                query_insert = """
+                    INSERT INTO song (
+                        videoId, duration, durationSeconds, isAvailable, isExplicit, 
+                        likeStatus, title, videoType, liked, totalPlayTime, 
+                        downloadState, favoriteAt, downloadedAt, inLibrary, 
+                        canvasUrl, canvasThumbUrl
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                
+                cursor.executemany(query_insert, dados_song)
 
                 # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
                 cursor.execute("DELETE FROM pair_song_local_playlist")
@@ -127,7 +144,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Coluna 'videoType' preenchida como 'Song'.")
+                st.info("✅ Todas as restrições NOT NULL foram preenchidas conforme solicitado.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
