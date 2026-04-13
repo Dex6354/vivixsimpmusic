@@ -45,7 +45,7 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados da tabela song do arquivo enviado (incluindo explicit)
+        # 1. Extrair dados da tabela song do arquivo enviado
         conn_v = sqlite3.connect(path_song_db)
         query = """
             SELECT p.songId, s.duration, s.explicit 
@@ -60,9 +60,9 @@ if vivi_file:
         st.success(f"✅ {len(lista_ids)} IDs e metadados recuperados.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
         elif not os.path.exists(SETTINGS_FILE):
-            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado.")
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
         else:
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
@@ -72,22 +72,22 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
+                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song (Destino) ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: videoId, duration (M:SS), durationSeconds, isAvailable (1), isExplicit (valor original)
+                # Prepara os dados: videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus
                 dados_song = []
                 for _, row in df_source.iterrows():
                     s_id = row['songId']
                     d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
                     d_fmt = format_duration(d_raw)
-                    # Captura o valor da coluna explicit do arquivo enviado
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     
-                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit))
+                    # Adicionado "INDIFFERENT" para likeStatus
+                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT"))
                 
                 cursor.executemany(
-                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus) VALUES (?, ?, ?, ?, ?, ?)",
                     dados_song
                 )
 
@@ -125,7 +125,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Coluna 'isExplicit' preenchida com os dados originais do arquivo enviado.")
+                st.info("✅ Tabela 'song' preenchida com likeStatus: INDIFFERENT.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
