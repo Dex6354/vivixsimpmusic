@@ -40,7 +40,24 @@ def find_album_id(obj):
             if result: return result
     return None
 
-st.title("📂 Gerador de base: Music Database + Album ID")
+def extract_artist(obj):
+    """Busca o nome do artista no campo longBylineText"""
+    if isinstance(obj, dict):
+        if "longBylineText" in obj:
+            try:
+                return obj["longBylineText"]["runs"][0]["text"]
+            except (KeyError, IndexError):
+                pass
+        for v in obj.values():
+            result = extract_artist(v)
+            if result: return result
+    elif isinstance(obj, list):
+        for item in obj:
+            result = extract_artist(item)
+            if result: return result
+    return None
+
+st.title("📂 Gerador de base: Music Database + Album & Artist")
 
 vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
@@ -60,7 +77,6 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados incluindo thumbnailUrl
         conn_v = sqlite3.connect(path_song_db)
         query = """
             SELECT p.songId, s.duration, s.explicit, s.title, s.thumbnailUrl 
@@ -88,13 +104,12 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
                 ts_val = 1775992827379
                 dados_song = []
                 
-                st.write("🔍 Extraindo IDs de Álbum e processando Thumbnails...")
+                st.write("🔍 Extraindo Metadados (Álbum e Artista) via YTMusic...")
                 progress_bar = st.progress(0)
                 total_rows = len(df_source)
 
@@ -104,17 +119,20 @@ if vivi_file:
                     d_fmt = format_duration(d_raw)
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
-                    # Captura a URL da thumbnail do banco de origem
                     thumb_url = str(row['thumbnailUrl']) if pd.notna(row['thumbnailUrl']) else None
                     
                     album_id = None
+                    artist_name = None
+                    
                     try:
+                        # Uma única chamada para obter ambos os dados
                         response = yt._send_request("next", {"videoId": s_id})
                         album_id = find_album_id(response)
+                        artist_name = extract_artist(response)
                     except:
-                        album_id = None
+                        pass
 
-                    # A ordem aqui deve seguir exatamente a query_insert abaixo
+                    # Ordem dos campos para a tabela 'song' do SimpMusic
                     dados_song.append((
                         s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song",
                         0,          # liked
@@ -126,24 +144,25 @@ if vivi_file:
                         None,       # canvasUrl
                         None,       # canvasThumbUrl
                         album_id,   # albumId
-                        thumb_url   # thumbnails
+                        thumb_url,  # thumbnails
+                        artist_name # artistNames (Adicionado)
                     ))
                     
                     progress_bar.progress((index + 1) / total_rows)
                 
-                # Query atualizada com 18 parâmetros
+                # Query com 19 parâmetros (incluindo artistNames)
                 query_insert = """
                     INSERT INTO song (
                         videoId, duration, durationSeconds, isAvailable, isExplicit, 
                         likeStatus, title, videoType, liked, totalPlayTime, 
                         downloadState, favoriteAt, downloadedAt, inLibrary, 
-                        canvasUrl, canvasThumbUrl, albumId, thumbnails
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        canvasUrl, canvasThumbUrl, albumId, thumbnails, artistNames
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 
                 cursor.executemany(query_insert, dados_song)
 
-                # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
+                # Atualização das tabelas de playlist
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
@@ -152,14 +171,12 @@ if vivi_file:
                     dados_insercao
                 )
 
-                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
                 cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
                 conn_out.commit()
                 conn_out.close()
 
-                # 4. Criar o pacote final .backup
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
