@@ -47,7 +47,6 @@ if vivi_file:
 
         # 1. Extrair dados da tabela song do arquivo enviado
         conn_v = sqlite3.connect(path_song_db)
-        # JOIN para garantir a ordem da playlist e pegar a duração original
         query = """
             SELECT p.songId, s.duration 
             FROM playlist_song_map p
@@ -61,9 +60,9 @@ if vivi_file:
         st.success(f"✅ {len(lista_ids)} IDs e metadados recuperados.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
         elif not os.path.exists(SETTINGS_FILE):
-            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado.")
         else:
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
@@ -73,20 +72,19 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song (Destino) ---
+                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados:
-                # videoId (ID), duration (formatada M:SS), durationSeconds (segundos puros)
+                # Prepara os dados: videoId, duration (M:SS), durationSeconds, isAvailable (1)
                 dados_song = []
                 for _, row in df_source.iterrows():
                     s_id = row['songId']
                     d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
                     d_fmt = format_duration(d_raw)
-                    dados_song.append((s_id, d_fmt, d_raw))
+                    dados_song.append((s_id, d_fmt, d_raw, 1))
                 
                 cursor.executemany(
-                    "INSERT INTO song (videoId, duration, durationSeconds) VALUES (?, ?, ?)",
+                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable) VALUES (?, ?, ?, ?)",
                     dados_song
                 )
 
@@ -124,7 +122,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Coluna 'durationSeconds' preenchida com sucesso.")
+                st.info("✅ Colunas 'durationSeconds' e 'isAvailable' preenchidas.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
