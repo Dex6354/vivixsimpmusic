@@ -45,7 +45,7 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados da tabela song do arquivo enviado (incluindo title)
+        # 1. Extrair dados da tabela song do arquivo enviado
         conn_v = sqlite3.connect(path_song_db)
         query = """
             SELECT p.songId, s.duration, s.explicit, s.title 
@@ -75,20 +75,21 @@ if vivi_file:
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title
+                # Prepara os dados: 
+                # videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title, videoType
                 dados_song = []
                 for _, row in df_source.iterrows():
                     s_id = row['songId']
                     d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
                     d_fmt = format_duration(d_raw)
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
-                    # Pega o title do arquivo enviado
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
                     
-                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title))
+                    # Adicionado "Song" para videoType
+                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song"))
                 
                 cursor.executemany(
-                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit, likeStatus, title, videoType) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     dados_song
                 )
 
@@ -126,7 +127,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Coluna 'title' preenchida com os dados originais.")
+                st.info("✅ Coluna 'videoType' preenchida como 'Song'.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
