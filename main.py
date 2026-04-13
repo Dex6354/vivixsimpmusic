@@ -1,48 +1,40 @@
 import streamlit as st
 from ytmusicapi import YTMusic
-import json
 
-# Inicializa a API (Modo público/sem auth para este teste)
+# Inicializa a API
 yt = YTMusic()
 
-st.set_page_config(page_title="Debugger JSON - AlbumId", layout="wide")
+st.set_page_config(page_title="JSON Debugger", layout="wide")
 
-st.title("🐞 Debugger de Metadados: AC/DC - Highway to Hell")
+st.title("🐞 Debugger: Busca de AlbumId")
 
-# Dados fixos do item
-VIDEO_ID = "ikFFVfObwss"
-QUERY = "Highway to Hell AC/DC - Topic"
+# Dados para busca
+video_id = "ikFFVfObwss"
+search_query = "Highway to Hell AC/DC" # Removido "- Topic" para melhor indexação
 
-if st.button("Executar Busca e Gerar JSON"):
+if st.button("Buscar Metadados"):
     try:
-        # Lógica: Busca textual filtrando por 'songs' para obter o objeto oficial de prateleira
-        # Esse é o método que retorna a estrutura {"album": {"name": "...", "id": "..."}}
-        search_results = yt.search(QUERY, filter="songs")
+        # A API search com filtro 'songs' retorna o objeto 'album' com o 'id'
+        results = yt.search(search_query, filter="songs")
         
-        if search_results:
-            # Filtra o resultado que corresponde ao videoId exato, ou pega o primeiro
-            match = next((item for item in search_results if item.get('videoId') == VIDEO_ID), search_results[0])
+        # Procura o objeto que contém o videoId correto
+        match = next((item for item in results if item.get('videoId') == video_id), None)
+        
+        if match:
+            st.subheader("✅ Resultado Encontrado")
             
-            # Captura o AlbumId se ele existir no objeto
-            album_info = match.get('album', {})
-            album_id_final = album_info.get('id', "NÃO ENCONTRADO NO JSON")
-
-            # Exibição do Debugger
-            st.success(f"Busca finalizada!")
+            # Exibe o albumId detectado de forma clara
+            album_id = match.get('album', {}).get('id', "NÃO ENCONTRADO")
+            st.code(f"AlbumId extraído: {album_id}")
             
-            col1, col2 = st.columns(2)
-            col1.metric("Video ID", VIDEO_ID)
-            col2.metric("Album ID Encontrado", album_id_final)
-
             st.divider()
-            st.subheader("📦 JSON Bruto da API")
-            st.write("Verifique abaixo a chave `'album'` -> `'id'`")
+            st.subheader("📦 JSON Completo")
+            # Este é o debugger solicitado
             st.json(match)
-            
         else:
-            st.error("Nenhum resultado encontrado para a busca.")
+            st.warning("Música não encontrada nos resultados de busca com este ID.")
+            st.write("Resultados da busca geral para análise:")
+            st.json(results)
             
     except Exception as e:
-        st.error(f"Erro na API: {e}")
-
-st.info("Nota: Se o 'albumId' ainda não aparecer como MPREb..., o YouTube Music pode estar tratando este vídeo 'Topic' apenas como vídeo. Nesse caso, tente buscar apenas por 'Highway to Hell AC/DC' (sem o '- Topic').")
+        st.error(f"Erro ao acessar a API: {e}")
