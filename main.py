@@ -9,19 +9,13 @@ import json
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# Arquivos necessários na raiz
+# Arquivos necessários na raiz do projeto
 BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
-def get_table_info(conn, table_name):
-    """Obtém metadados das colunas: nome, tipo e se é obrigatória (NOT NULL)."""
-    cursor = conn.cursor()
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    # row[1] = nome, row[2] = tipo, row[3] = notnull (1 ou 0)
-    return {row[1]: {"type": row[2], "notnull": row[3]} for row in cursor.fetchall()}
-
 st.title("📂 Gerador de base: Music Database")
 
+# Upload do arquivo .backup (ZIP com song.db)
 vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
 if vivi_file:
@@ -33,121 +27,93 @@ if vivi_file:
         f.write(vivi_file.read())
 
     try:
+        # 1. Abrir o ZIP (.backup) e extrair o song.db
         with zipfile.ZipFile(path_vivi_backup, 'r') as z:
             if "song.db" in z.namelist():
                 z.extract("song.db", proc_dir)
             else:
-                st.error("Arquivo 'song.db' não encontrado no backup.")
+                st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Carregar dados da origem
-        conn_source = sqlite3.connect(path_song_db)
-        df_src = pd.read_sql_query("SELECT * FROM song", conn_source)
-        lista_ids = pd.read_sql_query("SELECT songId FROM playlist_song_map ORDER BY rowid", conn_source)['songId'].tolist()
-        conn_source.close()
+        # 2. Extrair IDs do song.db
+        conn_v = sqlite3.connect(path_song_db)
+        query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
+        df_ids = pd.read_sql_query(query, conn_v)
+        conn_v.close()
+
+        lista_ids = df_ids['songId'].tolist()
+        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo song.db.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
-            st.stop()
-            
-        # 2. Mapear estrutura do destino
-        conn_dest_check = sqlite3.connect(BASE_SIMP)
-        dest_info = get_table_info(conn_dest_check, "song")
-        cols_dest = list(dest_info.keys())
-        conn_dest_check.close()
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
+        elif not os.path.exists(SETTINGS_FILE):
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
+        else:
+            # 3. Preparar o novo arquivo "Music Database"
+            db_output_name = "Music Database"
+            db_output_path = os.path.join(proc_dir, db_output_name)
+            shutil.copy2(BASE_SIMP, db_output_path)
 
-        # 3. Construir DataFrame de destino dinamicamente
-        df_dest = pd.DataFrame()
-        
-        # Mapeamentos de nomes conhecidos (Origem -> Destino)
-        mapping = {'id': 'videoId', 'duration': 'duration'}
-        for src_col, dest_col in mapping.items():
-            if src_col in df_src.columns and dest_col in cols_dest:
-                df_dest[dest_col] = df_src[src_col]
+            try:
+                conn_out = sqlite3.connect(db_output_path)
+                cursor = conn_out.cursor()
 
-        # Copiar outras colunas com nomes idênticos
-        for col in df_src.columns:
-            if col in cols_dest and col not in df_dest.columns:
-                df_dest[col] = df_src[col]
+                # --- 1. ATUALIZAÇÃO DA TABELA song (videoId) ---
+                # Insere os IDs na tabela song caso não existam
+                dados_song = [(s_id,) for s_id in lista_ids]
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO song (videoId) VALUES (?)",
+                    dados_song
+                )
 
-        # Garantir cálculo de segundos
-        if 'duration' in df_dest.columns and 'durationSeconds' in cols_dest:
-            df_dest['durationSeconds'] = (df_dest['duration'] / 1000).fillna(0).astype(int)
+                # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
+                cursor.execute("DELETE FROM pair_song_local_playlist")
+                val_in_playlist = 1775992825264
+                dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
 
-        # 4. TRATAMENTO GLOBAL AUTOMÁTICO PARA NOT NULL
-        # Dicionário de valores padrão para colunas essenciais do app
-        defaults = {
-            'isAvailable': 1,
-            'isExplicit': 0,
-            'isOffline': 0,
-            'liked': 0,
-            'inLibrary': 1,
-            'likeStatus': 'INDIFFERENT',
-            'videoType': 'MUSIC_VIDEO_TYPE_ATV',
-            'totalPlayTime': 0,
-            'albumId': '',
-            'albumName': '',
-            'thumbnailUrl': ''
-        }
+                cursor.executemany(
+                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
+                    dados_insercao
+                )
 
-        for col_name, info in dest_info.items():
-            if info['notnull'] == 1 and col_name not in df_dest.columns:
-                # Tenta pegar do dicionário, se não existir usa 0 para números ou string vazia
-                val = defaults.get(col_name)
-                if val is None:
-                    val = 0 if "INT" in info['type'].upper() else ""
-                df_dest[col_name] = val
+                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist (Coluna tracks) ---
+                tracks_json = json.dumps(lista_ids)
+                cursor.execute(
+                    "UPDATE local_playlist SET tracks = ? WHERE id = 1",
+                    (tracks_json,)
+                )
 
-        # 5. Gravação no Banco Final
-        db_output_name = "Music Database"
-        db_output_path = os.path.join(proc_dir, db_output_name)
-        shutil.copy2(BASE_SIMP, db_output_path)
+                conn_out.commit()
+                
+                cursor.execute("SELECT COUNT(*) FROM pair_song_local_playlist")
+                total_final = cursor.fetchone()[0]
+                conn_out.close()
 
-        try:
-            conn_out = sqlite3.connect(db_output_path)
-            cursor = conn_out.cursor()
-
-            # Inserir músicas
-            cols_to_insert = df_dest.columns.tolist()
-            placeholders = ", ".join(["?"] * len(cols_to_insert))
-            sql_insert = f"INSERT OR REPLACE INTO song ({', '.join(cols_to_insert)}) VALUES ({placeholders})"
-            cursor.executemany(sql_insert, df_dest.values.tolist())
-
-            # Atualizar tabelas de playlist
-            cursor.execute("DELETE FROM pair_song_local_playlist")
-            val_in_playlist = 1775992825264
-            dados_pair = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
-            cursor.executemany(
-                "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
-                dados_pair
-            )
-
-            tracks_json = json.dumps(lista_ids)
-            cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
-
-            conn_out.commit()
-            conn_out.close()
-
-            # 6. Gerar pacote final .backup
-            final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
-            with zipfile.ZipFile(final_backup_path, 'w') as zipf:
-                zipf.write(db_output_path, arcname=db_output_name)
-                if os.path.exists(SETTINGS_FILE):
+                # 4. Criar o pacote final .backup
+                final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
+                with zipfile.ZipFile(final_backup_path, 'w') as zipf:
+                    zipf.write(db_output_path, arcname=db_output_name)
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
-            with open(final_backup_path, "rb") as f:
-                st.success(f"✅ Sucesso! {len(lista_ids)} músicas processadas sem erros de restrição.")
+                # 5. Download
+                with open(final_backup_path, "rb") as f:
+                    backup_data = f.read()
+                
+                st.divider()
+                st.write(f"📊 Total de registros processados: {total_final}")
+                st.info("✅ Tabelas 'song', 'local_playlist' e 'pair_song' atualizadas.")
+                
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
-                    data=f.read(),
+                    data=backup_data,
                     file_name="simpmusic.backup",
                     mime="application/octet-stream"
                 )
 
-        except Exception as e:
-            st.error(f"Erro ao gravar dados: {e}")
+            except Exception as e:
+                st.error(f"Erro ao processar banco de dados: {e}")
             
     except Exception as e:
-        st.error(f"Erro no processamento: {e}")
+        st.error(f"Erro ao processar o arquivo enviado: {e}")
     finally:
         shutil.rmtree(proc_dir, ignore_errors=True)
