@@ -13,9 +13,18 @@ st.set_page_config(page_title="Music Database Generator", layout="wide")
 BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
+def format_duration(seconds):
+    """Converte segundos para o formato M:SS"""
+    try:
+        seconds = int(seconds)
+        minutes = seconds // 60
+        remaining_seconds = seconds % 60
+        return f"{minutes}:{remaining_seconds:02d}"
+    except:
+        return "0:00"
+
 st.title("📂 Gerador de base: Music Database")
 
-# Upload do arquivo .backup (ZIP com song.db)
 vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
 if vivi_file:
@@ -27,7 +36,6 @@ if vivi_file:
         f.write(vivi_file.read())
 
     try:
-        # 1. Abrir o ZIP (.backup) e extrair o song.db
         with zipfile.ZipFile(path_vivi_backup, 'r') as z:
             if "song.db" in z.namelist():
                 z.extract("song.db", proc_dir)
@@ -35,21 +43,21 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 2. Extrair IDs do song.db
+        # 1. Extrair songId e duration do song.db original
         conn_v = sqlite3.connect(path_song_db)
-        query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
-        df_ids = pd.read_sql_query(query, conn_v)
+        # Ajuste na query para pegar a duração
+        query = "SELECT songId, duration FROM playlist_song_map ORDER BY rowid"
+        df_source = pd.read_sql_query(query, conn_v)
         conn_v.close()
 
-        lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados no arquivo song.db.")
+        lista_ids = df_source['songId'].tolist()
+        st.success(f"✅ {len(lista_ids)} IDs e durações encontrados.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
         elif not os.path.exists(SETTINGS_FILE):
-            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado.")
         else:
-            # 3. Preparar o novo arquivo "Music Database"
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
             shutil.copy2(BASE_SIMP, db_output_path)
@@ -59,13 +67,16 @@ if vivi_file:
                 cursor = conn_out.cursor()
 
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
-                # Limpa a tabela completamente
                 cursor.execute("DELETE FROM song")
                 
-                # Insere apenas os IDs capturados na coluna videoId
-                dados_song = [(s_id,) for s_id in lista_ids]
+                # Prepara os dados: (videoId, duration_formatada)
+                dados_song = [
+                    (row['songId'], format_duration(row['duration'])) 
+                    for _, row in df_source.iterrows()
+                ]
+                
                 cursor.executemany(
-                    "INSERT INTO song (videoId) VALUES (?)",
+                    "INSERT INTO song (videoId, duration) VALUES (?, ?)",
                     dados_song
                 )
 
@@ -79,7 +90,7 @@ if vivi_file:
                     dados_insercao
                 )
 
-                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist (Coluna tracks) ---
+                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
                 cursor.execute(
                     "UPDATE local_playlist SET tracks = ? WHERE id = 1",
@@ -92,19 +103,17 @@ if vivi_file:
                 total_songs = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 4. Criar o pacote final .backup
+                # 4. Pacote final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
-                # 5. Download
                 with open(final_backup_path, "rb") as f:
                     backup_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total de registros na tabela song: {total_songs}")
-                st.info("✅ Tabela 'song' resetada e populada com os novos IDs.")
+                st.write(f"📊 Total processado: {total_songs}")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
