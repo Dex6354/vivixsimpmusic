@@ -8,7 +8,7 @@ import zipfile
 import json
 from ytmusicapi import YTMusic
 
-# Inicializa a API do YouTube Music (Modo Guest/Público)
+# Inicializa a API do YouTube Music
 yt = YTMusic()
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
@@ -43,7 +43,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Iniciando busca de metadados...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando metadados online...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base (db ou settings) ausentes na raiz.")
@@ -56,35 +56,30 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. CAPTURA DE ALBUMID E ATUALIZAÇÃO DA TABELA song ---
+                # --- LIMPEZA E ATUALIZAÇÃO DA TABELA song ---
+                # Remove todos os registros antigos para manter apenas os novos
+                cursor.execute("DELETE FROM song")
+                
                 progress_bar = st.progress(0)
                 dados_completos_song = []
                 
                 for i, v_id in enumerate(lista_ids):
                     album_id = None
                     try:
-                        # Busca detalhes da música para obter o albumId
                         song_details = yt.get_song(v_id)
-                        # Tenta capturar o browseId do álbum
-                        album_id = song_details.get('videoDetails', {}).get('albumId') 
-                        # Se não encontrar no videoDetails, tenta em microformat
-                        if not album_id:
-                            album_id = song_details.get('microformat', {}).get('microformatDataRenderer', {}).get('unlisted')
+                        album_id = song_details.get('videoDetails', {}).get('albumId')
                     except:
                         pass
                     
                     dados_completos_song.append((v_id, album_id))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # Insere ou atualiza o albumId se a música já existir
-                for v_id, alb_id in dados_completos_song:
-                    cursor.execute("""
-                        INSERT INTO song (videoId, albumId) 
-                        VALUES (?, ?) 
-                        ON CONFLICT(videoId) DO UPDATE SET albumId = excluded.albumId
-                    """, (v_id, alb_id))
+                cursor.executemany(
+                    "INSERT INTO song (videoId, albumId) VALUES (?, ?)",
+                    dados_completos_song
+                )
 
-                # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
+                # --- ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
@@ -94,14 +89,14 @@ if vivi_file:
                     dados_insercao
                 )
 
-                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist ---
+                # --- ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
                 cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
                 conn_out.commit()
                 conn_out.close()
 
-                # 4. Pacote final
+                # Criar pacote final .backup
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -114,7 +109,7 @@ if vivi_file:
                         file_name="simpmusic.backup",
                         mime="application/octet-stream"
                     )
-                st.success("Processamento concluído com albumIds vinculados!")
+                st.success("Tabela 'song' limpa e novos IDs (com albumId) inseridos!")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
