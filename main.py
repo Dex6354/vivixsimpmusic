@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Consultando API...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Consultando via Watch Playlist...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -57,51 +57,49 @@ if vivi_file:
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
-                debug_list = [] # Lista para o Debugger visual
-                tuplas_insercao = [] # Dados para o SQL
+                debug_data = [] 
+                tuplas_insercao = [] 
                 
                 for i, v_id in enumerate(lista_ids):
-                    raw_response = {}
                     alb_id, dur, tit, art = "", 0, "Unknown", "Unknown"
+                    raw_watch = {}
                     
                     try:
-                        # Captura a resposta bruta
-                        raw_response = yt.get_song(v_id)
+                        # NOVA FORMA: get_watch_playlist é mais completo para metadados de álbum
+                        raw_watch = yt.get_watch_playlist(v_id)
                         
-                        v_det = raw_response.get('videoDetails', {})
-                        tit = v_det.get('title', "Unknown")
-                        art = v_det.get('author', "Unknown")
-                        dur = int(v_det.get('lengthSeconds', 0))
-                        
-                        # Tenta capturar o albumId (browseId)
-                        alb_id = v_det.get('albumId', "")
+                        if 'tracks' in raw_watch and len(raw_watch['tracks']) > 0:
+                            track = raw_watch['tracks'][0]
+                            tit = track.get('title', tit)
+                            art = track.get('artists', [{}])[0].get('name', art)
+                            dur = int(track.get('lengthSeconds', 0)) if track.get('lengthSeconds') else 0
+                            
+                            # O albumId (browseId) geralmente está aqui
+                            album_info = track.get('album', {})
+                            alb_id = album_info.get('id', "")
                     except Exception as e:
-                        raw_response = {"error": str(e)}
+                        raw_watch = {"error": str(e)}
 
-                    # Salva para o Debugger
-                    debug_list.append({
+                    debug_data.append({
                         "videoId": v_id,
-                        "albumId_detectado": alb_id,
-                        "api_raw_full": raw_response # JSON completo aqui
+                        "albumId_encontrado": alb_id,
+                        "json_completo": raw_watch
                     })
 
-                    # Prepara para o Banco
                     tuplas_insercao.append((
                         v_id, tit, art, alb_id, dur, dur, 1, 0
                     ))
                     
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER EXAUSTIVO ---
+                # --- DEBUGGER VISUAL ---
                 st.divider()
-                st.subheader("🐞 Debugger: Resposta Bruta da API")
-                st.write("Abra os itens abaixo para inspecionar o JSON retornado pelo YouTube Music:")
-                
-                for item in debug_list:
-                    with st.expander(f"Música: {item['videoId']} (Detectado: {item['albumId_detectado']})"):
-                        st.json(item['api_raw_full'])
+                st.subheader("🐞 Debugger: Inspeção de Metadados (Watch Playlist)")
+                for item in debug_data:
+                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId_encontrado']}"):
+                        st.json(item['json_completo'])
 
-                # --- INSERÇÃO NO BANCO ---
+                # --- INSERÇÃO ---
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
@@ -110,7 +108,7 @@ if vivi_file:
                     tuplas_insercao
                 )
 
-                # Tabelas auxiliares
+                # Atualiza playlists
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_playlist = [(d[0], 1, idx, val_in_playlist) for idx, d in enumerate(tuplas_insercao)]
@@ -125,7 +123,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # Geração do .backup
+                # Finalização
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
