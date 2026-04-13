@@ -1,33 +1,36 @@
 import streamlit as st
 from ytmusicapi import YTMusic
-import json
 
+# Inicializa a API
 yt = YTMusic()
 
-st.set_page_config(page_title="Deep JSON Debugger", layout="wide")
-st.title("🐞 Deep Debugger: ikFFVfObwss")
+st.set_page_config(page_title="JSON Debugger - AlbumId", layout="wide")
 
+st.title("🐞 Debugger: Captura de AlbumId")
+
+# O ID que você forneceu
 VIDEO_ID = "ikFFVfObwss"
 
-if st.button("Forçar Varredura de Metadados"):
+if st.button("Capturar JSON com AlbumId"):
     try:
-        # Método que acessa os dados do player do YouTube Music
-        raw_data = yt.get_song(VIDEO_ID)
+        # get_watch_playlist é o endpoint que contém a relação música-álbum (MPREb...)
+        response = yt.get_watch_playlist(VIDEO_ID)
         
-        st.subheader("📦 Resposta Completa da API")
-        st.write("Procure por 'browseId' ou 'albumId' dentro dos campos abaixo:")
+        # Tenta localizar o ID no primeiro rastro do objeto
+        detected_id = "Não encontrado no JSON"
+        if 'tracks' in response and len(response['tracks']) > 0:
+            album_obj = response['tracks'][0].get('album', {})
+            detected_id = album_obj.get('id', detected_id)
+
+        st.success(f"Processado!")
+        st.metric("Album ID Detectado", detected_id)
         
-        # Exibe o JSON bruto para inspeção manual
-        st.json(raw_data)
+        st.divider()
+        st.subheader("📦 JSON Capturado (Watch Playlist)")
+        st.write("Expanda o JSON abaixo e procure por: `tracks` -> `[0]` -> `album` -> `id`")
         
-        # Tentativa de extração automática via Microformat
-        try:
-            microformat = raw_data.get('microformat', {}).get('microformatDataRenderer', {})
-            st.divider()
-            st.subheader("📌 Possível Localização:")
-            st.write(f"Link de navegação: {microformat.get('urlCanonical')}")
-        except:
-            pass
-            
+        # Exibe o JSON completo onde o MPREb_D5nYt9190Tm deve residir
+        st.json(response)
+        
     except Exception as e:
-        st.error(f"Erro ao acessar os dados: {e}")
+        st.error(f"Erro ao capturar dados: {e}")
