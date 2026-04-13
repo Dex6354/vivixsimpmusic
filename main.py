@@ -1,42 +1,44 @@
 import streamlit as st
 from ytmusicapi import YTMusic
 
-def get_album_id(video_id):
+def get_album_id_v2(video_id):
+    ytmusic = YTMusic()
     try:
-        ytmusic = YTMusic()
-        # Obtém os detalhes da música/vídeo
-        song_details = ytmusic.get_song(video_id)
+        # A lógica do SimpMusic/InnerTune consiste em obter a 'watch playlist'
+        # do vídeo. Isso força o YouTube a retornar o contexto do álbum/set.
+        playlist = ytmusic.get_watch_playlist(videoId=video_id)
         
-        # O albumId fica dentro do dicionário 'videoDetails' ou 'microformat'
-        # Tentamos extrair de forma segura
-        album_id = song_details.get('videoDetails', {}).get('albumId')
+        # O primeiro item da lista (index 0) costuma ser a própria música com metadados expandidos
+        tracks = playlist.get('tracks', [])
+        if tracks:
+            album_info = tracks[0].get('album', {})
+            return album_info.get('id') # Este é o browseId do álbum
         
-        return album_id
+        return None
     except Exception as e:
-        return f"Erro ao buscar: {e}"
+        return f"Erro: {e}"
 
-# Configuração da Interface Streamlit
-st.set_page_config(page_title="YouTube Music Metadata Extractor", layout="centered")
+# Interface Streamlit
+st.set_page_config(page_title="Extrator AlbumId (SimpMusic Logic)", layout="centered")
 
-st.title("🎵 Extrator de AlbumId")
-st.write("Insira o ID do vídeo para capturar o parâmetro do álbum.")
+st.title("🎵 Extrator de AlbumId Profissional")
+st.write("Utilizando a lógica de extração via `watch_playlist`.")
 
-# Input do usuário
-video_id_input = st.text_input("Video ID / Song ID", value="ikFFVfObwss")
+video_id_input = st.text_input("Video ID", value="ikFFVfObwss")
 
 if st.button("Capturar albumId"):
-    with st.spinner("Buscando dados no YouTube Music..."):
-        res_album_id = get_album_id(video_id_input)
+    with st.spinner("Extraindo metadados avançados..."):
+        album_id = get_album_id_v2(video_id_input)
         
-        if res_album_id:
-            st.success(f"**albumId encontrado:** `{res_album_id}`")
-            st.code(res_album_id, language=None)
+        if album_id:
+            st.success(f"**albumId extraído:** `{album_id}`")
+            st.code(album_id, language=None)
             
-            # Link direto para o álbum se quiser conferir
-            st.markdown(f"[Acessar Álbum no YT Music](https://music.youtube.com/browse/{res_album_id})")
+            # Verificação visual
+            url = f"https://music.youtube.com/browse/{album_id}"
+            st.markdown(f"🔗 [Abrir Álbum no YT Music]({url})")
         else:
-            st.warning("Não foi possível encontrar um albumId vinculado a este ID.")
+            st.error("Não foi possível encontrar o albumId. O vídeo pode ser um upload de usuário (não oficial) ou um arquivo sem álbum vinculado.")
 
-# Rodapé informativo
 st.divider()
-st.caption("Nota: Alguns vídeos/singles podem não ter um albumId associado se não fizerem parte de um álbum ou EP oficial.")
+st.info("Dica: Se o resultado for nulo, tente com um vídeo oficial (Official Audio) em vez de um videoclipe.")
