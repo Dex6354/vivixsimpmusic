@@ -6,6 +6,7 @@ import os
 import shutil
 import zipfile
 import json
+from ytmusicapi import YTMusic
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
@@ -25,7 +26,21 @@ def format_duration(seconds):
     except:
         return "0:00"
 
-st.title("📂 Gerador de base: Music Database")
+def find_album_id(obj):
+    """Busca recursiva pelo browseId que inicia com MPREb_ (Álbum)"""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "browseId" and isinstance(v, str) and v.startswith("MPREb_"):
+                return v
+            result = find_album_id(v)
+            if result: return result
+    elif isinstance(obj, list):
+        for item in obj:
+            result = find_album_id(item)
+            if result: return result
+    return None
+
+st.title("📂 Gerador de base: Music Database + Album ID")
 
 vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
 
@@ -69,43 +84,57 @@ if vivi_file:
             shutil.copy2(BASE_SIMP, db_output_path)
 
             try:
+                yt = YTMusic()
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
-                # Timestamp solicitado
                 ts_val = 1775992827379
-                
-                # Preparar dados para inserção com as novas colunas
                 dados_song = []
-                for _, row in df_source.iterrows():
+                
+                st.write("🔍 Extraindo IDs de Álbum via YTMusic...")
+                progress_bar = st.progress(0)
+                total_rows = len(df_source)
+
+                for index, row in df_source.iterrows():
                     s_id = row['songId']
                     d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
                     d_fmt = format_duration(d_raw)
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
                     
+                    # Lógica de extração do Album ID
+                    album_id = None
+                    try:
+                        response = yt._send_request("next", {"videoId": s_id})
+                        album_id = find_album_id(response)
+                    except:
+                        album_id = None
+
                     dados_song.append((
                         s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song",
-                        0,      # liked
-                        0,      # totalPlayTime
-                        0,      # downloadState
-                        ts_val, # favoriteAt
-                        ts_val, # downloadedAt
-                        ts_val, # inLibrary
-                        None,   # canvasUrl
-                        None    # canvasThumbUrl
+                        0,          # liked
+                        0,          # totalPlayTime
+                        0,          # downloadState
+                        ts_val,     # favoriteAt
+                        ts_val,     # downloadedAt
+                        ts_val,     # inLibrary
+                        None,       # canvasUrl
+                        None,       # canvasThumbUrl
+                        album_id    # albumId (Nova Coluna)
                     ))
+                    
+                    progress_bar.progress((index + 1) / total_rows)
                 
                 query_insert = """
                     INSERT INTO song (
                         videoId, duration, durationSeconds, isAvailable, isExplicit, 
                         likeStatus, title, videoType, liked, totalPlayTime, 
                         downloadState, favoriteAt, downloadedAt, inLibrary, 
-                        canvasUrl, canvasThumbUrl
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        canvasUrl, canvasThumbUrl, albumId
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 
                 cursor.executemany(query_insert, dados_song)
@@ -114,7 +143,6 @@ if vivi_file:
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
-
                 cursor.executemany(
                     "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
                     dados_insercao
@@ -122,15 +150,9 @@ if vivi_file:
 
                 # --- 3. ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
-                cursor.execute(
-                    "UPDATE local_playlist SET tracks = ? WHERE id = 1",
-                    (tracks_json,)
-                )
+                cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
                 conn_out.commit()
-                
-                cursor.execute("SELECT COUNT(*) FROM song")
-                total_songs = cursor.fetchone()[0]
                 conn_out.close()
 
                 # 4. Criar o pacote final .backup
@@ -143,8 +165,7 @@ if vivi_file:
                     backup_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Todas as restrições NOT NULL foram preenchidas conforme solicitado.")
+                st.success(f"📊 {total_rows} músicas processadas com sucesso!")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
