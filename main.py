@@ -42,10 +42,10 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Puxando metadados via API...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Iniciando consulta à API...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
-            st.error("Arquivos base ausentes na raiz.")
+            st.error("Arquivos base ausentes na raiz (simpmusic.db ou settings.preferences_pb).")
         else:
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
@@ -60,11 +60,14 @@ if vivi_file:
                 dados_completos_song = []
                 
                 for i, v_id in enumerate(lista_ids):
-                    # Padrões para evitar NOT NULL
-                    alb_id, dur, tit, art = "Unknown_Album", 0, "Unknown Title", "Unknown Artist"
+                    # Valores padrão para evitar falhas de NOT NULL
+                    alb_id = "" 
+                    dur = 0
+                    tit = "Unknown Title"
+                    art = "Unknown Artist"
                     
                     try:
-                        # Tenta obter detalhes da música
+                        # Busca profunda de metadados
                         s_det = yt.get_song(v_id)
                         v_det = s_det.get('videoDetails', {})
                         
@@ -72,49 +75,58 @@ if vivi_file:
                         art = v_det.get('author', art)
                         dur = int(v_det.get('lengthSeconds', 0))
                         
-                        # Tentativa 1: Pegar albumId direto
+                        # Tenta capturar albumId de diferentes locais da resposta
                         alb_id = v_det.get('albumId')
-                        
-                        # Tentativa 2: Se falhar, tenta buscar via metadados de microformat
                         if not alb_id:
+                            # Tenta via microformat (comum em vídeos oficiais)
                             alb_id = s_det.get('microformat', {}).get('microformatDataRenderer', {}).get('unlisted')
                     except:
                         pass
                     
-                    # Se mesmo assim for None, definimos uma string vazia ou padrão
-                    if alb_id is None:
-                        alb_id = ""
+                    # Garante que albumId não seja None para o SQLite
+                    if alb_id is None: alb_id = ""
 
-                    dados_completos_song.append((
-                        v_id, tit, art, alb_id, dur, dur, 1, 0
-                    ))
+                    dados_completos_song.append({
+                        'videoId': v_id,
+                        'title': tit,
+                        'artistName': art,
+                        'albumId': alb_id,
+                        'duration': dur,
+                        'durationSeconds': dur,
+                        'isAvailable': 1,
+                        'isExplicit': 0
+                    })
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER NA TELA ---
+                # --- DEBUGGER: MOSTRA OS DADOS ANTES DA INSERÇÃO ---
                 st.divider()
-                st.subheader("🐞 Debugger: Verificação de Metadados")
-                df_debug = pd.DataFrame(dados_completos_song, columns=[
-                    'videoId', 'title', 'artistName', 'albumId', 
-                    'duration', 'durationSeconds', 'isAvailable', 'isExplicit'
-                ])
+                st.subheader("🐞 Debugger: Metadados capturados da API")
+                df_debug = pd.DataFrame(dados_completos_song)
                 st.dataframe(df_debug, use_container_width=True)
 
-                # --- INSERÇÃO ---
+                # --- INSERÇÃO NO BANCO ---
+                # Converte lista de dicts para lista de tuplas na ordem correta
+                tuplas_insercao = [
+                    (d['videoId'], d['title'], d['artistName'], d['albumId'], 
+                     d['duration'], d['durationSeconds'], d['isAvailable'], d['isExplicit']) 
+                    for d in dados_completos_song
+                ]
+
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
                         duration, durationSeconds, isAvailable, isExplicit
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    dados_completos_song
+                    tuplas_insercao
                 )
 
-                # Atualização das outras tabelas
+                # Atualização de tabelas de playlist
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
-                dados_insercao = [(s_id, 1, idx, val_in_playlist) for idx, s_id in enumerate(lista_ids)]
+                dados_playlist = [(d['videoId'], 1, idx, val_in_playlist) for idx, d in enumerate(dados_completos_song)]
                 cursor.executemany(
                     "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
-                    dados_insercao
+                    dados_playlist
                 )
 
                 tracks_json = json.dumps(lista_ids)
@@ -123,6 +135,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
+                # Geração do arquivo final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -130,6 +143,8 @@ if vivi_file:
 
                 with open(final_backup_path, "rb") as f:
                     st.download_button("📥 BAIXAR SIMPMUSIC.BACKUP", f.read(), "simpmusic.backup")
+                
+                st.success("Tabela 'song' populada com sucesso!")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
