@@ -56,18 +56,19 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- LIMPEZA E ATUALIZAÇÃO DA TABELA song ---
+                # --- LIMPEZA DA TABELA ---
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
                 dados_completos_song = []
                 
                 for i, v_id in enumerate(lista_ids):
-                    # Valores padrão para evitar NOT NULL constraints
                     album_id = None
                     duration_val = 0
                     title = "Unknown Title"
                     artist = "Unknown Artist"
+                    is_available = 1 # Valor para a constraint NOT NULL
+                    is_explicit = 0
                     
                     try:
                         song_details = yt.get_song(v_id)
@@ -80,22 +81,30 @@ if vivi_file:
                     except:
                         pass
                     
-                    # Inserindo em ambas as colunas (duration e durationSeconds) para cobrir variações de DB
-                    dados_completos_song.append((v_id, title, artist, album_id, duration_val, duration_val))
+                    # Tupla com as colunas mapeadas
+                    dados_completos_song.append((
+                        v_id, title, artist, album_id, 
+                        duration_val, duration_val, is_available, is_explicit
+                    ))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # Query robusta cobrindo as colunas que causaram erro
+                # --- DEBUGGER (ANTES DA INSERÇÃO) ---
+                st.divider()
+                st.subheader("🐞 Debugger: Dados preparados para inserção")
+                df_debug = pd.DataFrame(dados_completos_song, columns=[
+                    'videoId', 'title', 'artistName', 'albumId', 
+                    'duration', 'durationSeconds', 'isAvailable', 'isExplicit'
+                ])
+                st.dataframe(df_debug, use_container_width=True)
+
+                # --- EXECUÇÃO DA INSERÇÃO ---
                 cursor.executemany(
-                    """INSERT INTO song (videoId, title, artistName, albumId, duration, durationSeconds) 
-                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO song (
+                        videoId, title, artistName, albumId, 
+                        duration, durationSeconds, isAvailable, isExplicit
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     dados_completos_song
                 )
-
-                # --- DEBUGGER NA TELA ---
-                st.divider()
-                st.subheader("🐞 Debugger: Dados Inseridos na Tabela 'song'")
-                df_debug = pd.DataFrame(dados_completos_song, columns=['videoId', 'title', 'artistName', 'albumId', 'duration', 'durationSeconds'])
-                st.dataframe(df_debug, use_container_width=True)
 
                 # --- ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
                 cursor.execute("DELETE FROM pair_song_local_playlist")
@@ -114,7 +123,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # Criar pacote final .backup
+                # Criar pacote final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -127,7 +136,7 @@ if vivi_file:
                         file_name="simpmusic.backup",
                         mime="application/octet-stream"
                     )
-                st.success("Tabela 'song' renovada e constraints resolvidas!")
+                st.success("Tabela 'song' renovada com sucesso!")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
