@@ -60,7 +60,7 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados da tabela song do arquivo enviado (Adicionado thumbnailUrl)
+        # 1. Extrair dados incluindo thumbnailUrl
         conn_v = sqlite3.connect(path_song_db)
         query = """
             SELECT p.songId, s.duration, s.explicit, s.title, s.thumbnailUrl 
@@ -94,7 +94,7 @@ if vivi_file:
                 ts_val = 1775992827379
                 dados_song = []
                 
-                st.write("🔍 Extraindo IDs de Álbum via YTMusic...")
+                st.write("🔍 Extraindo IDs de Álbum e processando Thumbnails...")
                 progress_bar = st.progress(0)
                 total_rows = len(df_source)
 
@@ -104,9 +104,9 @@ if vivi_file:
                     d_fmt = format_duration(d_raw)
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
-                    thumb = str(row['thumbnailUrl']) if pd.notna(row['thumbnailUrl']) else None
+                    # Captura a URL da thumbnail do banco de origem
+                    thumb_url = str(row['thumbnailUrl']) if pd.notna(row['thumbnailUrl']) else None
                     
-                    # Lógica de extração do Album ID
                     album_id = None
                     try:
                         response = yt._send_request("next", {"videoId": s_id})
@@ -114,6 +114,7 @@ if vivi_file:
                     except:
                         album_id = None
 
+                    # A ordem aqui deve seguir exatamente a query_insert abaixo
                     dados_song.append((
                         s_id, d_fmt, d_raw, 1, is_explicit, "INDIFFERENT", title, "Song",
                         0,          # liked
@@ -125,11 +126,12 @@ if vivi_file:
                         None,       # canvasUrl
                         None,       # canvasThumbUrl
                         album_id,   # albumId
-                        thumb       # thumbnails (Mapeado de thumbnailUrl)
+                        thumb_url   # thumbnails
                     ))
                     
                     progress_bar.progress((index + 1) / total_rows)
                 
+                # Query atualizada com 18 parâmetros
                 query_insert = """
                     INSERT INTO song (
                         videoId, duration, durationSeconds, isAvailable, isExplicit, 
