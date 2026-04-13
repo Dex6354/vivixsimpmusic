@@ -45,10 +45,10 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados da tabela song do arquivo enviado
+        # 1. Extrair dados da tabela song do arquivo enviado (incluindo explicit)
         conn_v = sqlite3.connect(path_song_db)
         query = """
-            SELECT p.songId, s.duration 
+            SELECT p.songId, s.duration, s.explicit 
             FROM playlist_song_map p
             LEFT JOIN song s ON p.songId = s.id
             ORDER BY p.rowid
@@ -75,16 +75,19 @@ if vivi_file:
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: videoId, duration (M:SS), durationSeconds, isAvailable (1)
+                # Prepara os dados: videoId, duration (M:SS), durationSeconds, isAvailable (1), isExplicit (valor original)
                 dados_song = []
                 for _, row in df_source.iterrows():
                     s_id = row['songId']
                     d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
                     d_fmt = format_duration(d_raw)
-                    dados_song.append((s_id, d_fmt, d_raw, 1))
+                    # Captura o valor da coluna explicit do arquivo enviado
+                    is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
+                    
+                    dados_song.append((s_id, d_fmt, d_raw, 1, is_explicit))
                 
                 cursor.executemany(
-                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO song (videoId, duration, durationSeconds, isAvailable, isExplicit) VALUES (?, ?, ?, ?, ?)",
                     dados_song
                 )
 
@@ -122,7 +125,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total processado: {total_songs} músicas.")
-                st.info("✅ Colunas 'durationSeconds' e 'isAvailable' preenchidas.")
+                st.info("✅ Coluna 'isExplicit' preenchida com os dados originais do arquivo enviado.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
