@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Iniciando extração via Search...")
+        st.success(f"✅ {len(lista_ids)} IDs. Extraindo AlbumId...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -62,48 +62,33 @@ if vivi_file:
                 
                 for i, v_id in enumerate(lista_ids):
                     alb_id, dur, tit, art, explicit = "", 0, "Unknown", "Unknown", 0
-                    raw_api = {}
+                    raw_dump = {}
                     
                     try:
-                        # 1. Pega metadados mínimos para criar um termo de busca (Igual ao exemplo Oasis)
-                        basic = yt.get_song(v_id)
-                        v_det = basic.get('videoDetails', {})
-                        query_term = f"{v_det.get('title')} {v_det.get('author')}"
+                        # 1. Obtém dados básicos do vídeo (onde o albumId costuma residir)
+                        song_data = yt.get_song(v_id)
+                        raw_dump = song_data
+                        v_det = song_data.get('videoDetails', {})
                         
-                        # 2. Realiza a busca filtrando por 'songs' para garantir o objeto completo
-                        search_results = yt.search(query_term, filter="songs")
+                        tit = v_det.get('title', "Unknown")
+                        art = v_det.get('author', "Unknown")
+                        dur = int(v_det.get('lengthSeconds', 0))
                         
-                        # 3. Tenta encontrar o item que corresponde ao videoId original
-                        match = next((item for item in search_results if item.get('videoId') == v_id), None)
+                        # 2. Tenta pegar o albumId direto do vídeo
+                        alb_id = v_det.get('albumId', "")
                         
-                        # Fallback: Se não achar match exato, usa o primeiro resultado da busca
-                        if not match and search_results:
-                            match = search_results[0]
-
-                        if match:
-                            raw_api = match
-                            tit = match.get('title', tit)
-                            art = match.get('artists', [{}])[0].get('name', art)
-                            explicit = 1 if match.get('isExplicit') else 0
-                            
-                            # EXTRAÇÃO DO ALBUM ID (browseId oficial)
-                            album_obj = match.get('album', {})
-                            alb_id = album_obj.get('id', "")
-                            
-                            # Duração em segundos
-                            dur_str = match.get('duration', "0")
-                            if ":" in str(dur_str):
-                                pts = list(map(int, dur_str.split(":")))
-                                dur = pts[0] * 60 + pts[1] if len(pts) == 2 else pts[0] * 3600 + pts[1] * 60 + pts[2]
-                            elif str(dur_str).isdigit():
-                                dur = int(dur_str)
+                        # 3. Se ainda estiver vazio, tenta via Watch Playlist (Contexto do Player)
+                        if not alb_id:
+                            watch_p = yt.get_watch_playlist(v_id)
+                            if 'tracks' in watch_p and len(watch_p['tracks']) > 0:
+                                alb_id = watch_p['tracks'][0].get('album', {}).get('id', "")
                     except Exception as e:
-                        raw_api = {"error_api": str(e)}
+                        raw_dump = {"error": str(e)}
 
                     debug_data.append({
                         "videoId": v_id,
-                        "albumId_detectado": alb_id,
-                        "metadados_completos": raw_api
+                        "albumId_final": alb_id,
+                        "json_completo": raw_dump
                     })
 
                     tuplas_insercao.append((
@@ -113,10 +98,10 @@ if vivi_file:
 
                 # --- DEBUGGER ---
                 st.divider()
-                st.subheader("🐞 Debugger: Verificação de Metadados")
+                st.subheader("🐞 Debugger: Inspeção de Metadados")
                 for item in debug_data:
-                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId_detectado']}"):
-                        st.json(item['metadados_completos'])
+                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId_final']}"):
+                        st.json(item['json_completo'])
 
                 # --- SQL ---
                 cursor.executemany(
