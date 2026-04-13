@@ -58,7 +58,15 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
+                # --- 1. ATUALIZAÇÃO DA TABELA song (videoId) ---
+                # Insere os IDs na tabela song caso não existam
+                dados_song = [(s_id,) for s_id in lista_ids]
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO song (videoId) VALUES (?)",
+                    dados_song
+                )
+
+                # --- 2. ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
@@ -68,11 +76,8 @@ if vivi_file:
                     dados_insercao
                 )
 
-                # --- ATUALIZAÇÃO DA TABELA local_playlist (Coluna tracks) ---
-                # Convertemos a lista de IDs para o formato JSON string: ["id1", "id2"]
+                # --- 3. ATUALIZAÇÃO DA TABELA local_playlist (Coluna tracks) ---
                 tracks_json = json.dumps(lista_ids)
-                
-                # Atualiza a playlist de ID 1 com a nova string de tracks
                 cursor.execute(
                     "UPDATE local_playlist SET tracks = ? WHERE id = 1",
                     (tracks_json,)
@@ -96,7 +101,7 @@ if vivi_file:
                 
                 st.divider()
                 st.write(f"📊 Total de registros processados: {total_final}")
-                st.info("💡 A coluna 'tracks' da playlist principal foi atualizada com sucesso.")
+                st.info("✅ Tabelas 'song', 'local_playlist' e 'pair_song' atualizadas.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
