@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados.")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Iniciando extração via Search...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -65,18 +65,18 @@ if vivi_file:
                     raw_api = {}
                     
                     try:
-                        # 1. Pega metadados básicos primeiro
-                        basic_info = yt.get_song(v_id)
-                        v_det = basic_info.get('videoDetails', {})
-                        search_query = f"{v_det.get('title')} {v_det.get('author')}"
+                        # 1. Pega metadados mínimos para criar um termo de busca (Igual ao exemplo Oasis)
+                        basic = yt.get_song(v_id)
+                        v_det = basic.get('videoDetails', {})
+                        query_term = f"{v_det.get('title')} {v_det.get('author')}"
                         
-                        # 2. Lógica Raitonoberu: Search para pegar o objeto 'Track' completo
-                        search_results = yt.search(search_query, filter="songs")
+                        # 2. Realiza a busca filtrando por 'songs' para garantir o objeto completo
+                        search_results = yt.search(query_term, filter="songs")
                         
-                        # Tenta encontrar o match exato pelo videoId nos resultados da busca
+                        # 3. Tenta encontrar o item que corresponde ao videoId original
                         match = next((item for item in search_results if item.get('videoId') == v_id), None)
                         
-                        # Se não achar match exato, pega o primeiro resultado da busca (mais provável ser a correta)
+                        # Fallback: Se não achar match exato, usa o primeiro resultado da busca
                         if not match and search_results:
                             match = search_results[0]
 
@@ -86,11 +86,11 @@ if vivi_file:
                             art = match.get('artists', [{}])[0].get('name', art)
                             explicit = 1 if match.get('isExplicit') else 0
                             
-                            # EXTRAÇÃO DO ALBUM ID (browseId)
+                            # EXTRAÇÃO DO ALBUM ID (browseId oficial)
                             album_obj = match.get('album', {})
                             alb_id = album_obj.get('id', "")
                             
-                            # Duração
+                            # Duração em segundos
                             dur_str = match.get('duration', "0")
                             if ":" in str(dur_str):
                                 pts = list(map(int, dur_str.split(":")))
@@ -102,8 +102,8 @@ if vivi_file:
 
                     debug_data.append({
                         "videoId": v_id,
-                        "albumId": alb_id,
-                        "full_json": raw_api
+                        "albumId_detectado": alb_id,
+                        "metadados_completos": raw_api
                     })
 
                     tuplas_insercao.append((
@@ -113,12 +113,12 @@ if vivi_file:
 
                 # --- DEBUGGER ---
                 st.divider()
-                st.subheader("🐞 Debugger: Inspeção de Objetos Track")
+                st.subheader("🐞 Debugger: Verificação de Metadados")
                 for item in debug_data:
-                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId']}"):
-                        st.json(item['full_json'])
+                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId_detectado']}"):
+                        st.json(item['metadados_completos'])
 
-                # --- INSERÇÃO ---
+                # --- SQL ---
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
@@ -141,7 +141,6 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # Backup final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
