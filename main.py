@@ -12,10 +12,12 @@ st.set_page_config(page_title="Music Database Generator", layout="wide")
 BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
-def get_columns(conn, table_name):
+def get_table_info(conn, table_name):
+    """Retorna informações detalhadas das colunas (nome, tipo, se é NOT NULL)."""
     cursor = conn.cursor()
     cursor.execute(f"PRAGMA table_info({table_name})")
-    return [row[1] for row in cursor.fetchall()]
+    # row[1] é o nome, row[3] é a flag NOTNULL (1 se for obrigatória)
+    return {row[1]: {"notnull": row[3]} for row in cursor.fetchall()}
 
 st.title("📂 Gerador de base: Music Database")
 
@@ -38,49 +40,59 @@ if vivi_file:
                 st.stop()
 
         conn_source = sqlite3.connect(path_song_db)
-        cols_source = get_columns(conn_source, "song")
         
         if not os.path.exists(BASE_SIMP):
             st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
             st.stop()
             
         conn_dest_check = sqlite3.connect(BASE_SIMP)
-        cols_dest = get_columns(conn_dest_check, "song")
+        dest_info = get_table_info(conn_dest_check, "song")
+        cols_dest = list(dest_info.keys())
         conn_dest_check.close()
 
         # 1. Extração da origem
-        exclude = ['id', 'videoId', 'duration', 'durationSeconds']
-        common_cols = [c for c in cols_source if c in cols_dest and c not in exclude]
-        
-        query_source = f"SELECT id, duration, {', '.join(common_cols)} FROM song"
-        df_src = pd.read_sql_query(query_source, conn_source)
-        
+        # Pegamos tudo que for possível da origem
+        df_src = pd.read_sql_query("SELECT * FROM song", conn_source)
         lista_ids = pd.read_sql_query("SELECT songId FROM playlist_song_map ORDER BY rowid", conn_source)['songId'].tolist()
         conn_source.close()
 
-        # 2. Construção do DataFrame de Destino
+        # 2. Construção do DataFrame de Destino dinamicamente
         df_dest = pd.DataFrame()
-        df_dest['videoId'] = df_src['id']
-        df_dest['duration'] = df_src['duration']
-        df_dest['durationSeconds'] = (df_src['duration'] / 1000).fillna(0).astype(int)
         
-        for col in common_cols:
-            df_dest[col] = df_src[col]
+        # Mapeamentos fundamentais
+        if 'id' in df_src.columns:
+            df_dest['videoId'] = df_src['id']
+        
+        if 'duration' in df_src.columns:
+            df_dest['duration'] = df_src['duration']
+            df_dest['durationSeconds'] = (df_src['duration'] / 1000).fillna(0).astype(int)
 
-        # 3. Valores padrão para evitar erros de NOT NULL
+        # Copia colunas com nomes idênticos
+        for col in df_src.columns:
+            if col in cols_dest and col not in df_dest.columns:
+                df_dest[col] = df_src[col]
+
+        # 3. CORREÇÃO GLOBAL: Preencher TODAS as colunas NOT NULL que ainda estão vazias
+        # Dicionário de tipos para preenchimento inteligente
         default_values = {
             'isAvailable': 1,
             'isExplicit': 0,
             'isOffline': 0,
             'liked': 0,
             'inLibrary': 1,
-            'likeStatus': 'INDIFFERENT', # Valor comum para status de curtida
-            'totalPlayTime': 0
+            'likeStatus': 'INDIFFERENT',
+            'videoType': 'MUSIC_VIDEO_TYPE_ATV', # Valor padrão comum para o erro atual
+            'totalPlayTime': 0,
+            'albumId': '',
+            'albumName': '',
+            'thumbnailUrl': ''
         }
 
-        for col_name, value in default_values.items():
-            if col_name in cols_dest and col_name not in df_dest.columns:
-                df_dest[col_name] = value
+        for col_name, info in dest_info.items():
+            if info['notnull'] == 1 and col_name not in df_dest.columns:
+                # Se for obrigatória e não existir no nosso DF, usa o default ou um valor vazio seguro
+                val = default_values.get(col_name, 0 if "int" in str(col_name).lower() else "")
+                df_dest[col_name] = val
 
         # 4. Gravação no Banco de Dados
         db_output_name = "Music Database"
@@ -120,7 +132,7 @@ if vivi_file:
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
             with open(final_backup_path, "rb") as f:
-                st.success(f"✅ Sucesso! {len(lista_ids)} músicas processadas.")
+                st.success(f"✅ Sucesso! {len(lista_ids)} músicas processadas sem erros de restrição.")
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
                     data=f.read(),
