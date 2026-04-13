@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs. Extraindo AlbumId via Search (Lógica Go)...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados.")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -57,7 +57,7 @@ if vivi_file:
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
-                dados_debugger = []
+                debug_data = []
                 tuplas_insercao = []
                 
                 for i, v_id in enumerate(lista_ids):
@@ -65,32 +65,34 @@ if vivi_file:
                     raw_api = {}
                     
                     try:
-                        # Lógica idêntica ao Search do Raitonoberu:
-                        # Busca o ID da música e filtra por 'songs' para obter o objeto Track completo
-                        search_results = yt.search(v_id, filter="songs")
+                        # Lógica Raitonoberu: Busca geral pelo ID
+                        # Removemos o filtro 'songs' para evitar que retorne vazio caso não seja 'official music'
+                        search_results = yt.search(v_id)
                         
-                        if search_results:
-                            # Pega o primeiro resultado (que será a música exata do ID)
-                            res = search_results[0]
-                            raw_api = res
+                        # Filtramos manualmente para achar o objeto que combine com o videoId
+                        match = next((item for item in search_results if item.get('videoId') == v_id), None)
+                        
+                        if match:
+                            raw_api = match
+                            tit = match.get('title', "Unknown")
+                            art = match.get('artists', [{}])[0].get('name', "Unknown")
+                            explicit = 1 if match.get('isExplicit') else 0
                             
-                            tit = res.get('title', "Unknown")
-                            art = res.get('artists', [{}])[0].get('name', "Unknown")
-                            explicit = 1 if res.get('isExplicit') else 0
-                            
-                            # Extração do Album ID (browseId) - Onde o MPREb... fica no Search
-                            album_obj = res.get('album', {})
+                            # Extração do Album ID
+                            album_obj = match.get('album', {})
                             alb_id = album_obj.get('id', "")
                             
-                            # Duração (converte "3:45" para segundos)
-                            dur_str = res.get('duration', "0")
+                            # Duração
+                            dur_str = match.get('duration', "0")
                             if ":" in str(dur_str):
                                 pts = list(map(int, dur_str.split(":")))
                                 dur = pts[0] * 60 + pts[1] if len(pts) == 2 else pts[0] * 3600 + pts[1] * 60 + pts[2]
+                        else:
+                            raw_api = {"info": "Nenhum resultado idêntico ao videoId na busca", "results": search_results}
                     except Exception as e:
                         raw_api = {"error": str(e)}
 
-                    dados_debugger.append({
+                    debug_data.append({
                         "videoId": v_id,
                         "albumId": alb_id,
                         "raw": raw_api
@@ -101,14 +103,14 @@ if vivi_file:
                     ))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER (VERIFICAÇÃO DO JSON RETORNADO) ---
+                # --- DEBUGGER ---
                 st.divider()
-                st.subheader("🐞 Debugger: Comparação de IDs (Lógica Search)")
-                for item in dados_debugger:
-                    with st.expander(f"Música: {item['videoId']} | AlbumId: {item['albumId']}"):
+                st.subheader("🐞 Debugger: JSON da API")
+                for item in debug_data:
+                    with st.expander(f"ID: {item['videoId']} | AlbumId Encontrado: {item['albumId']}"):
                         st.json(item['raw'])
 
-                # --- INSERÇÃO SQL ---
+                # --- SQL ---
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
@@ -117,7 +119,6 @@ if vivi_file:
                     tuplas_insercao
                 )
 
-                # Atualização de tabelas relacionadas
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
                 dados_playlist = [(d[0], 1, idx, val_in_playlist) for idx, d in enumerate(tuplas_insercao)]
@@ -132,6 +133,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
+                # Pacote Final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
