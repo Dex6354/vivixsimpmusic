@@ -60,10 +60,10 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair dados da tabela song do arquivo enviado
+        # 1. Extrair dados da tabela song do arquivo enviado (Adicionado thumbnailUrl)
         conn_v = sqlite3.connect(path_song_db)
         query = """
-            SELECT p.songId, s.duration, s.explicit, s.title 
+            SELECT p.songId, s.duration, s.explicit, s.title, s.thumbnailUrl 
             FROM playlist_song_map p
             LEFT JOIN song s ON p.songId = s.id
             ORDER BY p.rowid
@@ -104,6 +104,7 @@ if vivi_file:
                     d_fmt = format_duration(d_raw)
                     is_explicit = int(row['explicit']) if pd.notna(row['explicit']) else 0
                     title = str(row['title']) if pd.notna(row['title']) else "Unknown Title"
+                    thumb = str(row['thumbnailUrl']) if pd.notna(row['thumbnailUrl']) else None
                     
                     # Lógica de extração do Album ID
                     album_id = None
@@ -123,7 +124,8 @@ if vivi_file:
                         ts_val,     # inLibrary
                         None,       # canvasUrl
                         None,       # canvasThumbUrl
-                        album_id    # albumId (Nova Coluna)
+                        album_id,   # albumId
+                        thumb       # thumbnails (Mapeado de thumbnailUrl)
                     ))
                     
                     progress_bar.progress((index + 1) / total_rows)
@@ -133,8 +135,8 @@ if vivi_file:
                         videoId, duration, durationSeconds, isAvailable, isExplicit, 
                         likeStatus, title, videoType, liked, totalPlayTime, 
                         downloadState, favoriteAt, downloadedAt, inLibrary, 
-                        canvasUrl, canvasThumbUrl, albumId
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        canvasUrl, canvasThumbUrl, albumId, thumbnails
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 
                 cursor.executemany(query_insert, dados_song)
