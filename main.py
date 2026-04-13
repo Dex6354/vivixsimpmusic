@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Consultando API...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando Album IDs...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -62,64 +62,56 @@ if vivi_file:
                 for i, v_id in enumerate(lista_ids):
                     alb_id = "" 
                     dur = 0
-                    tit = "Unknown Title"
-                    art = "Unknown Artist"
+                    tit = "Unknown"
+                    art = "Unknown"
                     
                     try:
-                        # Busca detalhes da música
+                        # Passo 1: Detalhes básicos
                         s_det = yt.get_song(v_id)
                         v_det = s_det.get('videoDetails', {})
-                        
-                        tit = v_det.get('title', tit)
-                        art = v_det.get('author', art)
+                        tit = v_det.get('title', "Unknown")
+                        art = v_det.get('author', "Unknown")
                         dur = int(v_det.get('lengthSeconds', 0))
-                        
-                        # --- BUSCA EXAUSTIVA DO ALBUM ID ---
-                        # 1. Tentativa Direta
-                        alb_id = v_det.get('albumId')
-                        
-                        # 2. Tentativa via Microformat (browseId)
-                        if not alb_id:
-                            microformat = s_det.get('microformat', {}).get('microformatDataRenderer', {})
-                            alb_id = microformat.get('unlisted') # Algumas vezes o browseId cai aqui
-                        
-                        # 3. Tentativa via Player Response (Navegação interna)
-                        if not alb_id:
-                            try:
-                                # Tenta pegar o browseId do álbum na lista de sugestões/relacionados
-                                watch_next = yt.get_watch_playlist(v_id)
-                                alb_id = watch_next.get('lyrics') # Às vezes o ID do álbum está atrelado ao contexto do watch
-                            except: pass
 
-                    except Exception:
+                        # Passo 2: Busca PROFUNDA do albumId (MPREb...)
+                        # O watch_playlist traz o contexto do álbum onde a música está inserida
+                        watch_next = yt.get_watch_playlist(v_id)
+                        
+                        # Tenta extrair o browseId do álbum dos metadados da 'playlist' de reprodução
+                        if 'tracks' in watch_next and len(watch_next['tracks']) > 0:
+                            # Pega o browseId do álbum da primeira faixa (que é a própria música)
+                            alb_id = watch_next['tracks'][0].get('album', {}).get('id', "")
+                        
+                        # Backup: se ainda estiver vazio, tenta o método padrão
+                        if not alb_id:
+                            alb_id = v_det.get('albumId', "")
+                    except:
                         pass
                     
-                    # Garante valor para SQLite
-                    if alb_id is None: alb_id = ""
-
                     dados_completos_song.append({
                         'videoId': v_id,
+                        'albumId': alb_id if alb_id else "NÃO ENCONTRADO",
                         'title': tit,
-                        'artistName': art,
-                        'albumId': alb_id,
-                        'duration': dur,
-                        'durationSeconds': dur,
-                        'isAvailable': 1,
-                        'isExplicit': 0
+                        'artist': art,
+                        'duration': dur
                     })
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER: MOSTRA TUDO NA TELA ---
+                # --- DEBUGGER FOCADO ---
                 st.divider()
-                st.subheader("🐞 Debugger: Comparação videoId vs albumId")
+                st.subheader("🐞 Debugger: Foco no Album ID")
                 df_debug = pd.DataFrame(dados_completos_song)
-                # Reorganiza colunas para facilitar a sua visualização
-                st.dataframe(df_debug[['videoId', 'albumId', 'title', 'artistName', 'durationSeconds']], use_container_width=True)
+                
+                # Destaca o albumId para conferência rápida
+                st.dataframe(
+                    df_debug[['videoId', 'albumId', 'title', 'artist']], 
+                    use_container_width=True
+                )
 
                 # --- INSERÇÃO ---
                 tuplas_insercao = [
-                    (d['videoId'], d['title'], d['artistName'], d['albumId'], 
-                     d['duration'], d['durationSeconds'], d['isAvailable'], d['isExplicit']) 
+                    (d['videoId'], d['title'], d['artist'], d['albumId'], 
+                     d['duration'], d['duration'], 1, 0) 
                     for d in dados_completos_song
                 ]
 
@@ -146,7 +138,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # ZIP Final
+                # ZIP e Download
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -154,8 +146,6 @@ if vivi_file:
 
                 with open(final_backup_path, "rb") as f:
                     st.download_button("📥 BAIXAR SIMPMUSIC.BACKUP", f.read(), "simpmusic.backup")
-                
-                st.success("Processo finalizado.")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
