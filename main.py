@@ -4,33 +4,35 @@ from ytmusicapi import YTMusic
 # Inicializa a API
 yt = YTMusic()
 
-st.set_page_config(page_title="JSON Debugger - AlbumId", layout="wide")
+st.set_page_config(page_title="JSON Album Debugger", layout="wide")
 
-st.title("🐞 Debugger: Captura de AlbumId")
+st.title("🐞 Debugger: Captura de MPREb_D5nYt9190Tm")
 
-# O ID que você forneceu
 VIDEO_ID = "ikFFVfObwss"
 
-if st.button("Capturar JSON com AlbumId"):
+if st.button("Executar Busca Profunda"):
     try:
-        # get_watch_playlist é o endpoint que contém a relação música-álbum (MPREb...)
-        response = yt.get_watch_playlist(VIDEO_ID)
+        # Buscamos o ID diretamente. O YouTube Music retorna o objeto 'Track' 
+        # que contém a prateleira de álbum completa.
+        search_results = yt.search(VIDEO_ID)
         
-        # Tenta localizar o ID no primeiro rastro do objeto
-        detected_id = "Não encontrado no JSON"
-        if 'tracks' in response and len(response['tracks']) > 0:
-            album_obj = response['tracks'][0].get('album', {})
-            detected_id = album_obj.get('id', detected_id)
-
-        st.success(f"Processado!")
-        st.metric("Album ID Detectado", detected_id)
+        # Filtra pelo vídeo exato
+        match = next((item for item in search_results if item.get('videoId') == VIDEO_ID), None)
         
-        st.divider()
-        st.subheader("📦 JSON Capturado (Watch Playlist)")
-        st.write("Expanda o JSON abaixo e procure por: `tracks` -> `[0]` -> `album` -> `id`")
-        
-        # Exibe o JSON completo onde o MPREb_D5nYt9190Tm deve residir
-        st.json(response)
-        
+        if match:
+            st.success("Objeto encontrado!")
+            
+            # O MPREb_ costuma estar em match['album']['id']
+            # O MPLYt_ (que você viu) é o ID da playlist do álbum, o MPREb_ é o ID do álbum em si.
+            album_id = match.get('album', {}).get('id', "Não encontrado no nível 1")
+            st.code(f"Album ID: {album_id}")
+            
+            st.divider()
+            st.subheader("📦 JSON Completo")
+            st.json(match)
+        else:
+            st.warning("Não foi possível encontrar o objeto Track para este ID. Mostrando resultados gerais:")
+            st.json(search_results)
+            
     except Exception as e:
-        st.error(f"Erro ao capturar dados: {e}")
+        st.error(f"Erro na API: {e}")
