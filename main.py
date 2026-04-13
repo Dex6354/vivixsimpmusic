@@ -1,142 +1,48 @@
 import streamlit as st
-import sqlite3
-import tempfile
-import pandas as pd
-import os
-import shutil
-import zipfile
-import json
 from ytmusicapi import YTMusic
+import json
 
-# Inicializa a API
+# Inicializa a API (Modo público/sem auth para este teste)
 yt = YTMusic()
 
-st.set_page_config(page_title="Music Database Generator", layout="wide")
+st.set_page_config(page_title="Debugger JSON - AlbumId", layout="wide")
 
-BASE_SIMP = "simpmusic.db"
-SETTINGS_FILE = "settings.preferences_pb"
+st.title("🐞 Debugger de Metadados: AC/DC - Highway to Hell")
 
-st.title("📂 Gerador de base: Music Database")
+# Dados fixos do item
+VIDEO_ID = "ikFFVfObwss"
+QUERY = "Highway to Hell AC/DC - Topic"
 
-vivi_file = st.file_uploader("Importe o arquivo .backup", type=["backup"])
-
-if vivi_file:
-    proc_dir = tempfile.mkdtemp()
-    path_vivi_backup = os.path.join(proc_dir, "vivi_upload.backup")
-    path_song_db = os.path.join(proc_dir, "song.db")
-
-    with open(path_vivi_backup, "wb") as f:
-        f.write(vivi_file.read())
-
+if st.button("Executar Busca e Gerar JSON"):
     try:
-        with zipfile.ZipFile(path_vivi_backup, 'r') as z:
-            if "song.db" in z.namelist():
-                z.extract("song.db", proc_dir)
-            else:
-                st.error("Arquivo 'song.db' não encontrado.")
-                st.stop()
+        # Lógica: Busca textual filtrando por 'songs' para obter o objeto oficial de prateleira
+        # Esse é o método que retorna a estrutura {"album": {"name": "...", "id": "..."}}
+        search_results = yt.search(QUERY, filter="songs")
+        
+        if search_results:
+            # Filtra o resultado que corresponde ao videoId exato, ou pega o primeiro
+            match = next((item for item in search_results if item.get('videoId') == VIDEO_ID), search_results[0])
+            
+            # Captura o AlbumId se ele existir no objeto
+            album_info = match.get('album', {})
+            album_id_final = album_info.get('id', "NÃO ENCONTRADO NO JSON")
 
-        conn_v = sqlite3.connect(path_song_db)
-        query = "SELECT songId FROM playlist_song_map ORDER BY rowid"
-        df_ids = pd.read_sql_query(query, conn_v)
-        conn_v.close()
+            # Exibição do Debugger
+            st.success(f"Busca finalizada!")
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Video ID", VIDEO_ID)
+            col2.metric("Album ID Encontrado", album_id_final)
 
-        lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs. Extraindo AlbumId...")
-
-        if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
-            st.error("Arquivos base ausentes na raiz.")
+            st.divider()
+            st.subheader("📦 JSON Bruto da API")
+            st.write("Verifique abaixo a chave `'album'` -> `'id'`")
+            st.json(match)
+            
         else:
-            db_output_name = "Music Database"
-            db_output_path = os.path.join(proc_dir, db_output_name)
-            shutil.copy2(BASE_SIMP, db_output_path)
-
-            try:
-                conn_out = sqlite3.connect(db_output_path)
-                cursor = conn_out.cursor()
-                cursor.execute("DELETE FROM song")
-                
-                progress_bar = st.progress(0)
-                debug_data = []
-                tuplas_insercao = []
-                
-                for i, v_id in enumerate(lista_ids):
-                    alb_id, dur, tit, art, explicit = "", 0, "Unknown", "Unknown", 0
-                    raw_dump = {}
-                    
-                    try:
-                        # 1. Obtém dados básicos do vídeo (onde o albumId costuma residir)
-                        song_data = yt.get_song(v_id)
-                        raw_dump = song_data
-                        v_det = song_data.get('videoDetails', {})
-                        
-                        tit = v_det.get('title', "Unknown")
-                        art = v_det.get('author', "Unknown")
-                        dur = int(v_det.get('lengthSeconds', 0))
-                        
-                        # 2. Tenta pegar o albumId direto do vídeo
-                        alb_id = v_det.get('albumId', "")
-                        
-                        # 3. Se ainda estiver vazio, tenta via Watch Playlist (Contexto do Player)
-                        if not alb_id:
-                            watch_p = yt.get_watch_playlist(v_id)
-                            if 'tracks' in watch_p and len(watch_p['tracks']) > 0:
-                                alb_id = watch_p['tracks'][0].get('album', {}).get('id', "")
-                    except Exception as e:
-                        raw_dump = {"error": str(e)}
-
-                    debug_data.append({
-                        "videoId": v_id,
-                        "albumId_final": alb_id,
-                        "json_completo": raw_dump
-                    })
-
-                    tuplas_insercao.append((
-                        v_id, tit, art, alb_id, dur, dur, 1, explicit
-                    ))
-                    progress_bar.progress((i + 1) / len(lista_ids))
-
-                # --- DEBUGGER ---
-                st.divider()
-                st.subheader("🐞 Debugger: Inspeção de Metadados")
-                for item in debug_data:
-                    with st.expander(f"ID: {item['videoId']} | AlbumId: {item['albumId_final']}"):
-                        st.json(item['json_completo'])
-
-                # --- SQL ---
-                cursor.executemany(
-                    """INSERT INTO song (
-                        videoId, title, artistName, albumId, 
-                        duration, durationSeconds, isAvailable, isExplicit
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    tuplas_insercao
-                )
-
-                cursor.execute("DELETE FROM pair_song_local_playlist")
-                val_in_playlist = 1775992825264
-                dados_playlist = [(d[0], 1, idx, val_in_playlist) for idx, d in enumerate(tuplas_insercao)]
-                cursor.executemany(
-                    "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
-                    dados_playlist
-                )
-
-                tracks_json = json.dumps(lista_ids)
-                cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
-
-                conn_out.commit()
-                conn_out.close()
-
-                final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
-                with zipfile.ZipFile(final_backup_path, 'w') as zipf:
-                    zipf.write(db_output_path, arcname=db_output_name)
-                    zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
-
-                with open(final_backup_path, "rb") as f:
-                    st.download_button("📥 BAIXAR SIMPMUSIC.BACKUP", f.read(), "simpmusic.backup")
-
-            except Exception as e:
-                st.error(f"Erro no banco: {e}")
+            st.error("Nenhum resultado encontrado para a busca.")
+            
     except Exception as e:
-        st.error(f"Erro no arquivo: {e}")
-    finally:
-        shutil.rmtree(proc_dir, ignore_errors=True)
+        st.error(f"Erro na API: {e}")
+
+st.info("Nota: Se o 'albumId' ainda não aparecer como MPREb..., o YouTube Music pode estar tratando este vídeo 'Topic' apenas como vídeo. Nesse caso, tente buscar apenas por 'Highway to Hell AC/DC' (sem o '- Topic').")
