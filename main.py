@@ -45,9 +45,9 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair songId e duration do arquivo enviado
+        # 1. Extrair dados da tabela song do arquivo enviado
         conn_v = sqlite3.connect(path_song_db)
-        # JOIN entre a ordem da playlist e a tabela song do arquivo de origem
+        # JOIN para garantir a ordem da playlist e pegar a duração original
         query = """
             SELECT p.songId, s.duration 
             FROM playlist_song_map p
@@ -58,12 +58,12 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_source['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs e durações recuperados.")
+        st.success(f"✅ {len(lista_ids)} IDs e metadados recuperados.")
 
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
         elif not os.path.exists(SETTINGS_FILE):
-            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado.")
+            st.error(f"Arquivo '{SETTINGS_FILE}' não encontrado na raiz.")
         else:
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
@@ -76,14 +76,17 @@ if vivi_file:
                 # --- 1. LIMPEZA E INSERÇÃO NA TABELA song (Destino) ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: songId vai para videoId, e duration convertida
-                dados_song = [
-                    (row['songId'], format_duration(row['duration'])) 
-                    for _, row in df_source.iterrows()
-                ]
+                # Prepara os dados:
+                # videoId (ID), duration (formatada M:SS), durationSeconds (segundos puros)
+                dados_song = []
+                for _, row in df_source.iterrows():
+                    s_id = row['songId']
+                    d_raw = int(row['duration']) if pd.notna(row['duration']) else 0
+                    d_fmt = format_duration(d_raw)
+                    dados_song.append((s_id, d_fmt, d_raw))
                 
                 cursor.executemany(
-                    "INSERT INTO song (videoId, duration) VALUES (?, ?)",
+                    "INSERT INTO song (videoId, duration, durationSeconds) VALUES (?, ?, ?)",
                     dados_song
                 )
 
@@ -120,7 +123,8 @@ if vivi_file:
                     backup_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total de músicas processadas: {total_songs}")
+                st.write(f"📊 Total processado: {total_songs} músicas.")
+                st.info("✅ Coluna 'durationSeconds' preenchida com sucesso.")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
