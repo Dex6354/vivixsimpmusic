@@ -59,7 +59,6 @@ if vivi_file:
                 cursor = conn_out.cursor()
 
                 # --- 1. ATUALIZAÇÃO DA TABELA song (videoId) ---
-                # Insere os IDs na tabela song caso não existam
                 dados_song = [(s_id,) for s_id in lista_ids]
                 cursor.executemany(
                     "INSERT OR IGNORE INTO song (videoId) VALUES (?)",
@@ -77,7 +76,8 @@ if vivi_file:
                 )
 
                 # --- 3. ATUALIZAÇÃO DA TABELA local_playlist (Coluna tracks) ---
-                tracks_json = json.dumps(lista_ids)
+                # Ajuste dos separadores para remover o espaço após a vírgula
+                tracks_json = json.dumps(lista_ids, separators=(',', ':'))
                 cursor.execute(
                     "UPDATE local_playlist SET tracks = ? WHERE id = 1",
                     (tracks_json,)
