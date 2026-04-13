@@ -43,7 +43,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando metadados online...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando metadados...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base (db ou settings) ausentes na raiz.")
@@ -57,7 +57,6 @@ if vivi_file:
                 cursor = conn_out.cursor()
 
                 # --- LIMPEZA E ATUALIZAÇÃO DA TABELA song ---
-                # Remove todos os registros antigos para manter apenas os novos
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
@@ -65,17 +64,23 @@ if vivi_file:
                 
                 for i, v_id in enumerate(lista_ids):
                     album_id = None
+                    duration = 0 # Valor padrão para evitar erro de NOT NULL
+                    
                     try:
                         song_details = yt.get_song(v_id)
                         album_id = song_details.get('videoDetails', {}).get('albumId')
+                        # Tenta pegar a duração se disponível
+                        duration = int(song_details.get('videoDetails', {}).get('lengthSeconds', 0))
                     except:
                         pass
                     
-                    dados_completos_song.append((v_id, album_id))
+                    # Preenche com None/Padrões para evitar erros de constraint
+                    dados_completos_song.append((v_id, album_id, duration))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
+                # Ajuste na query para incluir duration e evitar erros de constraint
                 cursor.executemany(
-                    "INSERT INTO song (videoId, albumId) VALUES (?, ?)",
+                    "INSERT INTO song (videoId, albumId, duration) VALUES (?, ?, ?)",
                     dados_completos_song
                 )
 
@@ -109,7 +114,7 @@ if vivi_file:
                         file_name="simpmusic.backup",
                         mime="application/octet-stream"
                     )
-                st.success("Tabela 'song' limpa e novos IDs (com albumId) inseridos!")
+                st.success("Tabela 'song' renovada e constraints respeitadas!")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
