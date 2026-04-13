@@ -16,6 +16,8 @@ SETTINGS_FILE = "settings.preferences_pb"
 def format_duration(seconds):
     """Converte segundos para o formato M:SS"""
     try:
+        if pd.isna(seconds) or seconds is None:
+            return "0:00"
         seconds = int(seconds)
         minutes = seconds // 60
         remaining_seconds = seconds % 60
@@ -43,15 +45,20 @@ if vivi_file:
                 st.error("Arquivo 'song.db' não encontrado dentro do backup.")
                 st.stop()
 
-        # 1. Extrair songId e duration do song.db original
+        # 1. Extrair songId e duration do arquivo enviado
         conn_v = sqlite3.connect(path_song_db)
-        # Ajuste na query para pegar a duração
-        query = "SELECT songId, duration FROM playlist_song_map ORDER BY rowid"
+        # JOIN entre a ordem da playlist e a tabela song do arquivo de origem
+        query = """
+            SELECT p.songId, s.duration 
+            FROM playlist_song_map p
+            LEFT JOIN song s ON p.songId = s.id
+            ORDER BY p.rowid
+        """
         df_source = pd.read_sql_query(query, conn_v)
         conn_v.close()
 
         lista_ids = df_source['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs e durações encontrados.")
+        st.success(f"✅ {len(lista_ids)} IDs e durações recuperados.")
 
         if not os.path.exists(BASE_SIMP):
             st.error(f"Arquivo base '{BASE_SIMP}' não encontrado.")
@@ -66,10 +73,10 @@ if vivi_file:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
 
-                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song ---
+                # --- 1. LIMPEZA E INSERÇÃO NA TABELA song (Destino) ---
                 cursor.execute("DELETE FROM song")
                 
-                # Prepara os dados: (videoId, duration_formatada)
+                # Prepara os dados: songId vai para videoId, e duration convertida
                 dados_song = [
                     (row['songId'], format_duration(row['duration'])) 
                     for _, row in df_source.iterrows()
@@ -103,7 +110,7 @@ if vivi_file:
                 total_songs = cursor.fetchone()[0]
                 conn_out.close()
 
-                # 4. Pacote final
+                # 4. Criar o pacote final .backup
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -113,7 +120,7 @@ if vivi_file:
                     backup_data = f.read()
                 
                 st.divider()
-                st.write(f"📊 Total processado: {total_songs}")
+                st.write(f"📊 Total de músicas processadas: {total_songs}")
                 
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
