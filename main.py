@@ -1,38 +1,39 @@
 import streamlit as st
 from ytmusicapi import YTMusic
 
-# Inicializa a API
 yt = YTMusic()
 
-st.set_page_config(page_title="JSON Album Debugger", layout="wide")
-
-st.title("🐞 Debugger: Captura de MPREb_D5nYt9190Tm")
+st.set_page_config(page_title="JSON AlbumId Finder", layout="wide")
+st.title("🐞 Debugger de Precisão: MPREb_D5nYt9190Tm")
 
 VIDEO_ID = "ikFFVfObwss"
 
-if st.button("Executar Busca Profunda"):
+if st.button("Capturar Objeto com AlbumId"):
     try:
-        # Buscamos o ID diretamente. O YouTube Music retorna o objeto 'Track' 
-        # que contém a prateleira de álbum completa.
-        search_results = yt.search(VIDEO_ID)
+        # Este endpoint é o que vincula o vídeo ao contexto do álbum oficial
+        data = yt.get_watch_playlist(VIDEO_ID)
         
-        # Filtra pelo vídeo exato
-        match = next((item for item in search_results if item.get('videoId') == VIDEO_ID), None)
+        # Filtro para o Debugger: foca no primeiro item da lista de faixas
+        # onde o YouTube Music armazena o browseId do álbum
+        target_track = {}
+        if 'tracks' in data and len(data['tracks']) > 0:
+            target_track = data['tracks'][0]
+
+        st.success("JSON capturado!")
         
-        if match:
-            st.success("Objeto encontrado!")
-            
-            # O MPREb_ costuma estar em match['album']['id']
-            # O MPLYt_ (que você viu) é o ID da playlist do álbum, o MPREb_ é o ID do álbum em si.
-            album_id = match.get('album', {}).get('id', "Não encontrado no nível 1")
-            st.code(f"Album ID: {album_id}")
-            
-            st.divider()
-            st.subheader("📦 JSON Completo")
-            st.json(match)
-        else:
-            st.warning("Não foi possível encontrar o objeto Track para este ID. Mostrando resultados gerais:")
-            st.json(search_results)
+        # Mostramos o campo específico primeiro para conferência
+        album_data = target_track.get('album', {})
+        st.write(f"**Album ID detectado no objeto:** `{album_data.get('id')}`")
+
+        st.divider()
+        st.subheader("📦 JSON Completo (Foco: tracks[0])")
+        st.write("Verifique o campo `'album'` -> `'id'` dentro deste JSON:")
+        
+        # O debugger focado no objeto que contém o ID que você busca
+        st.json(target_track)
+        
+        with st.expander("Ver Resposta Completa da API (Raw)"):
+            st.json(data)
             
     except Exception as e:
-        st.error(f"Erro na API: {e}")
+        st.error(f"Erro ao capturar dados: {e}")
