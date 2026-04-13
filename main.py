@@ -13,7 +13,6 @@ BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
 def get_columns(conn, table_name):
-    """Retorna uma lista com os nomes das colunas de uma tabela."""
     cursor = conn.cursor()
     cursor.execute(f"PRAGMA table_info({table_name})")
     return [row[1] for row in cursor.fetchall()]
@@ -31,44 +30,38 @@ if vivi_file:
         f.write(vivi_file.read())
 
     try:
-        # 1. Extrair song.db do backup enviado
         with zipfile.ZipFile(path_vivi_backup, 'r') as z:
             if "song.db" in z.namelist():
                 z.extract("song.db", proc_dir)
             else:
-                st.error("Arquivo 'song.db' não encontrado dentro do backup.")
+                st.error("Arquivo 'song.db' não encontrado no backup.")
                 st.stop()
 
-        # 2. Identificar colunas comuns entre song2 (origem) e Music Database (destino)
+        # 1. Mapeamento de Colunas
         conn_source = sqlite3.connect(path_song_db)
         cols_source = get_columns(conn_source, "song")
         
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo '{BASE_SIMP}' não encontrado.")
+            st.error(f"Arquivo '{BASE_SIMP}' não encontrado na raiz.")
             st.stop()
             
-        conn_dest_temp = sqlite3.connect(BASE_SIMP)
-        cols_dest = get_columns(conn_dest_temp, "song")
-        conn_dest_temp.close()
+        conn_dest_check = sqlite3.connect(BASE_SIMP)
+        cols_dest = get_columns(conn_dest_check, "song")
+        conn_dest_check.close()
 
-        # Filtra apenas as colunas que existem em ambos os bancos
-        common_cols = [c for c in cols_source if c in cols_dest]
+        # Colunas que existem com o mesmo nome em ambos
+        common_cols = [c for c in cols_source if c in cols_dest and c not in ['id', 'videoId']]
         
-        if not common_cols:
-            st.error("Nenhuma coluna correspondente encontrada entre os bancos de dados.")
-            st.stop()
-
-        # Lê os dados das colunas comuns do arquivo enviado
-        query_source = f"SELECT {', '.join(common_cols)} FROM song"
+        # 2. Extração de dados (Mapeando 'id' da origem para 'videoId' do destino)
+        # No song2.db a chave é 'id', no Music Database a chave é 'videoId'
+        query_source = f"SELECT id as videoId, {', '.join(common_cols)} FROM song"
         df_metadata = pd.read_sql_query(query_source, conn_source)
         
         # Pega a ordem da playlist
         lista_ids = pd.read_sql_query("SELECT songId FROM playlist_song_map ORDER BY rowid", conn_source)['songId'].tolist()
         conn_source.close()
 
-        st.success(f"✅ Colunas sincronizadas: {', '.join(common_cols)}")
-
-        # 3. Gerar o novo banco de dados
+        # 3. Gerar novo banco
         db_output_name = "Music Database"
         db_output_path = os.path.join(proc_dir, db_output_name)
         shutil.copy2(BASE_SIMP, db_output_path)
@@ -77,30 +70,30 @@ if vivi_file:
             conn_out = sqlite3.connect(db_output_path)
             cursor = conn_out.cursor()
 
-            # Inserção dinâmica na tabela song
-            placeholders = ", ".join(["?"] * len(common_cols))
-            sql_insert_song = f"INSERT OR REPLACE INTO song ({', '.join(common_cols)}) VALUES ({placeholders})"
+            # Inserção na tabela 'song' (videoId + colunas comuns)
+            all_target_cols = ['videoId'] + common_cols
+            placeholders = ", ".join(["?"] * len(all_target_cols))
+            sql_insert_song = f"INSERT OR REPLACE INTO song ({', '.join(all_target_cols)}) VALUES ({placeholders})"
+            
             cursor.executemany(sql_insert_song, df_metadata.values.tolist())
 
-            # Atualização da tabela de junção (playlist)
+            # Atualização da junção (pair_song_local_playlist)
             cursor.execute("DELETE FROM pair_song_local_playlist")
             val_in_playlist = 1775992825264
-            # Assume-se que a coluna de ID na tabela destino é 'songId' ou similar
-            # Aqui usamos lista_ids que veio de playlist_song_map do backup
             dados_pair = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
             cursor.executemany(
                 "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
                 dados_pair
             )
 
-            # Atualização da coluna tracks (JSON) na local_playlist
+            # Atualização da lista JSON (tracks)
             tracks_json = json.dumps(lista_ids)
             cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
             conn_out.commit()
             conn_out.close()
 
-            # 4. Empacotar tudo de volta no .backup
+            # 4. ZIP/Backup Final
             final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
             with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                 zipf.write(db_output_path, arcname=db_output_name)
@@ -108,6 +101,7 @@ if vivi_file:
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
             with open(final_backup_path, "rb") as f:
+                st.success(f"✅ Sucesso! {len(lista_ids)} músicas sincronizadas visualmente.")
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
                     data=f.read(),
@@ -116,7 +110,7 @@ if vivi_file:
                 )
 
         except Exception as e:
-            st.error(f"Erro ao gravar no banco de destino: {e}")
+            st.error(f"Erro ao gravar dados: {e}")
             
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
