@@ -63,24 +63,30 @@ if vivi_file:
                 dados_completos_song = []
                 
                 for i, v_id in enumerate(lista_ids):
-                    album_id = None
-                    duration = 0 # Valor padrão para evitar erro de NOT NULL
+                    album_id = ""
+                    duration_seconds = 0
+                    title = "Unknown Title"
+                    artist_name = "Unknown Artist"
                     
                     try:
                         song_details = yt.get_song(v_id)
-                        album_id = song_details.get('videoDetails', {}).get('albumId')
-                        # Tenta pegar a duração se disponível
-                        duration = int(song_details.get('videoDetails', {}).get('lengthSeconds', 0))
+                        v_details = song_details.get('videoDetails', {})
+                        
+                        album_id = v_details.get('albumId', "")
+                        duration_seconds = int(v_details.get('lengthSeconds', 0))
+                        title = v_details.get('title', "Unknown Title")
+                        artist_name = v_details.get('author', "Unknown Artist")
                     except:
                         pass
                     
-                    # Preenche com None/Padrões para evitar erros de constraint
-                    dados_completos_song.append((v_id, album_id, duration))
+                    # Preenche com strings vazias ou valores padrão para evitar NOT NULL constraint failed
+                    dados_completos_song.append((v_id, title, artist_name, album_id, duration_seconds))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # Ajuste na query para incluir duration e evitar erros de constraint
+                # Query ajustada para as colunas comuns da tabela song no SimpMusic
                 cursor.executemany(
-                    "INSERT INTO song (videoId, albumId, duration) VALUES (?, ?, ?)",
+                    """INSERT INTO song (videoId, title, artistName, albumId, durationSeconds) 
+                       VALUES (?, ?, ?, ?, ?)""",
                     dados_completos_song
                 )
 
@@ -101,7 +107,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # Criar pacote final .backup
+                # Pacote final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
@@ -114,7 +120,7 @@ if vivi_file:
                         file_name="simpmusic.backup",
                         mime="application/octet-stream"
                     )
-                st.success("Tabela 'song' renovada e constraints respeitadas!")
+                st.success("Tabela 'song' atualizada com durationSeconds e metadados básicos!")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
