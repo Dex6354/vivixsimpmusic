@@ -42,7 +42,7 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando Album IDs...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Consultando API...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
             st.error("Arquivos base ausentes na raiz.")
@@ -57,57 +57,51 @@ if vivi_file:
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
-                dados_completos_song = []
+                debug_list = [] # Lista para o Debugger visual
+                tuplas_insercao = [] # Dados para o SQL
                 
                 for i, v_id in enumerate(lista_ids):
-                    alb_id = "" 
-                    dur, tit, art = 0, "Unknown", "Unknown"
+                    raw_response = {}
+                    alb_id, dur, tit, art = "", 0, "Unknown", "Unknown"
                     
                     try:
-                        # 1. Tenta obter o objeto da trilha (Mais preciso para Album ID)
-                        track_info = yt.get_song(v_id)
-                        v_details = track_info.get('videoDetails', {})
+                        # Captura a resposta bruta
+                        raw_response = yt.get_song(v_id)
                         
-                        tit = v_details.get('title', "Unknown")
-                        art = v_details.get('author', "Unknown")
-                        dur = int(v_details.get('lengthSeconds', 0))
+                        v_det = raw_response.get('videoDetails', {})
+                        tit = v_det.get('title', "Unknown")
+                        art = v_det.get('author', "Unknown")
+                        dur = int(v_det.get('lengthSeconds', 0))
+                        
+                        # Tenta capturar o albumId (browseId)
+                        alb_id = v_det.get('albumId', "")
+                    except Exception as e:
+                        raw_response = {"error": str(e)}
 
-                        # 2. Busca o albumId MPREb...
-                        # Tentativa A: Através do watch_playlist (simula o player)
-                        watch_data = yt.get_watch_playlist(v_id)
-                        if 'tracks' in watch_data and len(watch_data['tracks']) > 0:
-                            alb_id = watch_data['tracks'][0].get('album', {}).get('id', "")
-                        
-                        # Tentativa B: Fallback se A falhar
-                        if not alb_id:
-                            alb_id = v_details.get('albumId', "")
-                    except:
-                        pass
-                    
-                    dados_completos_song.append({
-                        'videoId': v_id,
-                        'albumId': alb_id if alb_id else "--- VAZIO ---",
-                        'title': tit,
-                        'artist': art,
-                        'duration': dur
+                    # Salva para o Debugger
+                    debug_list.append({
+                        "videoId": v_id,
+                        "albumId_detectado": alb_id,
+                        "api_raw_full": raw_response # JSON completo aqui
                     })
+
+                    # Prepara para o Banco
+                    tuplas_insercao.append((
+                        v_id, tit, art, alb_id, dur, dur, 1, 0
+                    ))
+                    
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER FOCADO EM ALBUMID ---
+                # --- DEBUGGER EXAUSTIVO ---
                 st.divider()
-                st.subheader("🐞 Debugger: Verificação de IDs")
-                df_debug = pd.DataFrame(dados_completos_song)
+                st.subheader("🐞 Debugger: Resposta Bruta da API")
+                st.write("Abra os itens abaixo para inspecionar o JSON retornado pelo YouTube Music:")
                 
-                # Exibe videoId e albumId lado a lado para conferência
-                st.table(df_debug[['videoId', 'albumId', 'title']])
+                for item in debug_list:
+                    with st.expander(f"Música: {item['videoId']} (Detectado: {item['albumId_detectado']})"):
+                        st.json(item['api_raw_full'])
 
-                # --- INSERÇÃO ---
-                tuplas_insercao = [
-                    (d['videoId'], d['title'], d['artist'], d['albumId'], 
-                     d['duration'], d['duration'], 1, 0) 
-                    for d in dados_completos_song
-                ]
-
+                # --- INSERÇÃO NO BANCO ---
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
@@ -119,7 +113,7 @@ if vivi_file:
                 # Tabelas auxiliares
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
-                dados_playlist = [(d['videoId'], 1, idx, val_in_playlist) for idx, d in enumerate(dados_completos_song)]
+                dados_playlist = [(d[0], 1, idx, val_in_playlist) for idx, d in enumerate(tuplas_insercao)]
                 cursor.executemany(
                     "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
                     dados_playlist
@@ -131,7 +125,7 @@ if vivi_file:
                 conn_out.commit()
                 conn_out.close()
 
-                # ZIP e Download
+                # Geração do .backup
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
