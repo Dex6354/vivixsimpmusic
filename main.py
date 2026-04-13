@@ -13,7 +13,6 @@ yt = YTMusic()
 
 st.set_page_config(page_title="Music Database Generator", layout="wide")
 
-# Arquivos necessários na raiz do projeto
 BASE_SIMP = "simpmusic.db"
 SETTINGS_FILE = "settings.preferences_pb"
 
@@ -34,7 +33,7 @@ if vivi_file:
             if "song.db" in z.namelist():
                 z.extract("song.db", proc_dir)
             else:
-                st.error("Arquivo 'song.db' não encontrado dentro do backup.")
+                st.error("Arquivo 'song.db' não encontrado.")
                 st.stop()
 
         conn_v = sqlite3.connect(path_song_db)
@@ -43,10 +42,10 @@ if vivi_file:
         conn_v.close()
 
         lista_ids = df_ids['songId'].tolist()
-        st.success(f"✅ {len(lista_ids)} IDs encontrados. Capturando metadados...")
+        st.success(f"✅ {len(lista_ids)} IDs encontrados. Puxando metadados via API...")
 
         if not os.path.exists(BASE_SIMP) or not os.path.exists(SETTINGS_FILE):
-            st.error("Arquivos base (db ou settings) ausentes na raiz.")
+            st.error("Arquivos base ausentes na raiz.")
         else:
             db_output_name = "Music Database"
             db_output_path = os.path.join(proc_dir, db_output_name)
@@ -55,49 +54,52 @@ if vivi_file:
             try:
                 conn_out = sqlite3.connect(db_output_path)
                 cursor = conn_out.cursor()
-
-                # --- LIMPEZA DA TABELA ---
                 cursor.execute("DELETE FROM song")
                 
                 progress_bar = st.progress(0)
                 dados_completos_song = []
                 
                 for i, v_id in enumerate(lista_ids):
-                    album_id = None
-                    duration_val = 0
-                    title = "Unknown Title"
-                    artist = "Unknown Artist"
-                    is_available = 1 # Valor para a constraint NOT NULL
-                    is_explicit = 0
+                    # Padrões para evitar NOT NULL
+                    alb_id, dur, tit, art = "Unknown_Album", 0, "Unknown Title", "Unknown Artist"
                     
                     try:
-                        song_details = yt.get_song(v_id)
-                        v_details = song_details.get('videoDetails', {})
+                        # Tenta obter detalhes da música
+                        s_det = yt.get_song(v_id)
+                        v_det = s_det.get('videoDetails', {})
                         
-                        album_id = v_details.get('albumId')
-                        duration_val = int(v_details.get('lengthSeconds', 0))
-                        title = v_details.get('title', "Unknown Title")
-                        artist = v_details.get('author', "Unknown Artist")
+                        tit = v_det.get('title', tit)
+                        art = v_det.get('author', art)
+                        dur = int(v_det.get('lengthSeconds', 0))
+                        
+                        # Tentativa 1: Pegar albumId direto
+                        alb_id = v_det.get('albumId')
+                        
+                        # Tentativa 2: Se falhar, tenta buscar via metadados de microformat
+                        if not alb_id:
+                            alb_id = s_det.get('microformat', {}).get('microformatDataRenderer', {}).get('unlisted')
                     except:
                         pass
                     
-                    # Tupla com as colunas mapeadas
+                    # Se mesmo assim for None, definimos uma string vazia ou padrão
+                    if alb_id is None:
+                        alb_id = ""
+
                     dados_completos_song.append((
-                        v_id, title, artist, album_id, 
-                        duration_val, duration_val, is_available, is_explicit
+                        v_id, tit, art, alb_id, dur, dur, 1, 0
                     ))
                     progress_bar.progress((i + 1) / len(lista_ids))
 
-                # --- DEBUGGER (ANTES DA INSERÇÃO) ---
+                # --- DEBUGGER NA TELA ---
                 st.divider()
-                st.subheader("🐞 Debugger: Dados preparados para inserção")
+                st.subheader("🐞 Debugger: Verificação de Metadados")
                 df_debug = pd.DataFrame(dados_completos_song, columns=[
                     'videoId', 'title', 'artistName', 'albumId', 
                     'duration', 'durationSeconds', 'isAvailable', 'isExplicit'
                 ])
                 st.dataframe(df_debug, use_container_width=True)
 
-                # --- EXECUÇÃO DA INSERÇÃO ---
+                # --- INSERÇÃO ---
                 cursor.executemany(
                     """INSERT INTO song (
                         videoId, title, artistName, albumId, 
@@ -106,37 +108,28 @@ if vivi_file:
                     dados_completos_song
                 )
 
-                # --- ATUALIZAÇÃO DA TABELA pair_song_local_playlist ---
+                # Atualização das outras tabelas
                 cursor.execute("DELETE FROM pair_song_local_playlist")
                 val_in_playlist = 1775992825264
-                dados_insercao = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
-
+                dados_insercao = [(s_id, 1, idx, val_in_playlist) for idx, s_id in enumerate(lista_ids)]
                 cursor.executemany(
                     "INSERT INTO pair_song_local_playlist (songId, playlistId, position, inPlaylist) VALUES (?, ?, ?, ?)", 
                     dados_insercao
                 )
 
-                # --- ATUALIZAÇÃO DA TABELA local_playlist ---
                 tracks_json = json.dumps(lista_ids)
                 cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
                 conn_out.commit()
                 conn_out.close()
 
-                # Criar pacote final
                 final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
                 with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                     zipf.write(db_output_path, arcname=db_output_name)
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
                 with open(final_backup_path, "rb") as f:
-                    st.download_button(
-                        label="📥 BAIXAR SIMPMUSIC.BACKUP",
-                        data=f.read(),
-                        file_name="simpmusic.backup",
-                        mime="application/octet-stream"
-                    )
-                st.success("Tabela 'song' renovada com sucesso!")
+                    st.download_button("📥 BAIXAR SIMPMUSIC.BACKUP", f.read(), "simpmusic.backup")
 
             except Exception as e:
                 st.error(f"Erro no banco: {e}")
