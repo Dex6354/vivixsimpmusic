@@ -1,39 +1,46 @@
 import streamlit as st
 from ytmusicapi import YTMusic
 
+# Inicializa cliente (modo sem autenticação)
 yt = YTMusic()
 
-st.set_page_config(page_title="JSON AlbumId Finder", layout="wide")
-st.title("🐞 Debugger de Precisão: MPREb_D5nYt9190Tm")
+st.title("Buscar albumId via videoId (YouTube Music)")
 
-VIDEO_ID = "ikFFVfObwss"
+# Input do usuário
+video_id = st.text_input("Digite o videoId / songId:", "ikFFVfObwss")
 
-if st.button("Capturar Objeto com AlbumId"):
+if st.button("Buscar albumId"):
     try:
-        # Este endpoint é o que vincula o vídeo ao contexto do álbum oficial
-        data = yt.get_watch_playlist(VIDEO_ID)
-        
-        # Filtro para o Debugger: foca no primeiro item da lista de faixas
-        # onde o YouTube Music armazena o browseId do álbum
-        target_track = {}
-        if 'tracks' in data and len(data['tracks']) > 0:
-            target_track = data['tracks'][0]
+        # Busca detalhes da música
+        song_data = yt.get_song(video_id)
 
-        st.success("JSON capturado!")
-        
-        # Mostramos o campo específico primeiro para conferência
-        album_data = target_track.get('album', {})
-        st.write(f"**Album ID detectado no objeto:** `{album_data.get('id')}`")
+        # Estrutura da resposta
+        video_details = song_data.get("videoDetails", {})
+        microformat = song_data.get("microformat", {})
+        player_microformat = microformat.get("microformatDataRenderer", {})
 
-        st.divider()
-        st.subheader("📦 JSON Completo (Foco: tracks[0])")
-        st.write("Verifique o campo `'album'` -> `'id'` dentro deste JSON:")
-        
-        # O debugger focado no objeto que contém o ID que você busca
-        st.json(target_track)
-        
-        with st.expander("Ver Resposta Completa da API (Raw)"):
-            st.json(data)
-            
+        # Tentativa 1: via playlistId (geralmente começa com 'OLAK5uy_')
+        album_id = player_microformat.get("albumId")
+
+        # Tentativa 2: fallback via browseId (mais confiável)
+        if not album_id:
+            music_data = yt.get_watch_playlist(video_id)
+            tracks = music_data.get("tracks", [])
+
+            if tracks:
+                album_info = tracks[0].get("album", {})
+                album_id = album_info.get("id")
+
+        # Exibir resultados
+        st.subheader("Resultado:")
+        st.write("Título:", video_details.get("title"))
+        st.write("Autor:", video_details.get("author"))
+        st.write("albumId:", album_id)
+
+        if album_id:
+            st.success(f"Album ID encontrado: {album_id}")
+        else:
+            st.error("Não foi possível encontrar o albumId.")
+
     except Exception as e:
-        st.error(f"Erro ao capturar dados: {e}")
+        st.error(f"Erro ao buscar dados: {str(e)}")
