@@ -41,28 +41,42 @@ if vivi_file:
         cols_source = get_columns(conn_source, "song")
         
         if not os.path.exists(BASE_SIMP):
-            st.error(f"Arquivo '{BASE_SIMP}' não encontrado.")
+            st.error(f"Arquivo base '{BASE_SIMP}' não encontrado na raiz.")
             st.stop()
             
         conn_dest_check = sqlite3.connect(BASE_SIMP)
         cols_dest = get_columns(conn_dest_check, "song")
         conn_dest_check.close()
 
-        # Identifica colunas comuns (exceto chaves e durações tratadas manualmente)
-        manual_cols = ['id', 'videoId', 'duration', 'durationSeconds']
-        common_cols = [c for c in cols_source if c in cols_dest and c not in manual_cols]
+        # Mapeamento manual de colunas críticas e obrigatórias
+        manual_mapping = {
+            'id': 'videoId',
+            'duration': 'duration'
+        }
         
-        # Extração: Mapeia id -> videoId e trata a duração
-        query_source = f"SELECT id as videoId, duration, {', '.join(common_cols)} FROM song"
-        df_metadata = pd.read_sql_query(query_source, conn_source)
+        # Identifica colunas comuns (excluindo as que trataremos manualmente)
+        exclude = ['id', 'videoId', 'duration', 'durationSeconds', 'isAvailable']
+        common_cols = [c for c in cols_source if c in cols_dest and c not in exclude]
         
-        # Converte milissegundos (do song2) para segundos (exigido pelo destino)
-        if 'duration' in df_metadata.columns:
-            df_metadata['durationSeconds'] = (df_metadata['duration'] / 1000).astype(int)
+        # Extração dos dados da origem
+        query_source = f"SELECT id, duration, {', '.join(common_cols)} FROM song"
+        df = pd.read_sql_query(query_source, conn_source)
         
+        # Pega a ordem da playlist
         lista_ids = pd.read_sql_query("SELECT songId FROM playlist_song_map ORDER BY rowid", conn_source)['songId'].tolist()
         conn_source.close()
 
+        # --- TRATAMENTO DE DADOS PARA O DESTINO ---
+        df_dest = pd.DataFrame()
+        df_dest['videoId'] = df['id']
+        df_dest['duration'] = df['duration']
+        df_dest['durationSeconds'] = (df['duration'] / 1000).fillna(0).astype(int)
+        df_dest['isAvailable'] = 1  # Preenche o NOT NULL que estava falhando
+        
+        for col in common_cols:
+            df_dest[col] = df[col]
+
+        # Criar o novo banco de dados
         db_output_name = "Music Database"
         db_output_path = os.path.join(proc_dir, db_output_name)
         shutil.copy2(BASE_SIMP, db_output_path)
@@ -71,15 +85,14 @@ if vivi_file:
             conn_out = sqlite3.connect(db_output_path)
             cursor = conn_out.cursor()
 
-            # Prepara colunas finais: videoId + duration + durationSeconds + colunas comuns
-            final_cols = ['videoId', 'duration', 'durationSeconds'] + common_cols
-            placeholders = ", ".join(["?"] * len(final_cols))
-            sql_insert_song = f"INSERT OR REPLACE INTO song ({', '.join(final_cols)}) VALUES ({placeholders})"
+            # Inserção na tabela 'song'
+            cols_to_insert = df_dest.columns.tolist()
+            placeholders = ", ".join(["?"] * len(cols_to_insert))
+            sql_insert = f"INSERT OR REPLACE INTO song ({', '.join(cols_to_insert)}) VALUES ({placeholders})"
             
-            # Reordena o DataFrame para bater com final_cols
-            cursor.executemany(sql_insert_song, df_metadata[final_cols].values.tolist())
+            cursor.executemany(sql_insert, df_dest.values.tolist())
 
-            # Atualização da playlist
+            # Limpeza e atualização da pair_song_local_playlist
             cursor.execute("DELETE FROM pair_song_local_playlist")
             val_in_playlist = 1775992825264
             dados_pair = [(s_id, 1, i, val_in_playlist) for i, s_id in enumerate(lista_ids)]
@@ -88,13 +101,14 @@ if vivi_file:
                 dados_pair
             )
 
-            # Atualização da coluna tracks
+            # Atualização da coluna tracks na local_playlist
             tracks_json = json.dumps(lista_ids)
             cursor.execute("UPDATE local_playlist SET tracks = ? WHERE id = 1", (tracks_json,))
 
             conn_out.commit()
             conn_out.close()
 
+            # Gerar backup final
             final_backup_path = os.path.join(proc_dir, "simpmusic.backup")
             with zipfile.ZipFile(final_backup_path, 'w') as zipf:
                 zipf.write(db_output_path, arcname=db_output_name)
@@ -102,7 +116,7 @@ if vivi_file:
                     zipf.write(SETTINGS_FILE, arcname=SETTINGS_FILE)
 
             with open(final_backup_path, "rb") as f:
-                st.success("✅ Backup gerado com sucesso!")
+                st.success(f"✅ Sucesso! {len(lista_ids)} músicas processadas com metadados.")
                 st.download_button(
                     label="📥 BAIXAR SIMPMUSIC.BACKUP",
                     data=f.read(),
