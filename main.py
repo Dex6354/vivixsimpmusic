@@ -1,46 +1,42 @@
 import streamlit as st
 from ytmusicapi import YTMusic
 
-# Inicializa cliente (modo sem autenticação)
-yt = YTMusic()
+def get_album_id(video_id):
+    try:
+        ytmusic = YTMusic()
+        # Obtém os detalhes da música/vídeo
+        song_details = ytmusic.get_song(video_id)
+        
+        # O albumId fica dentro do dicionário 'videoDetails' ou 'microformat'
+        # Tentamos extrair de forma segura
+        album_id = song_details.get('videoDetails', {}).get('albumId')
+        
+        return album_id
+    except Exception as e:
+        return f"Erro ao buscar: {e}"
 
-st.title("Buscar albumId via videoId (YouTube Music)")
+# Configuração da Interface Streamlit
+st.set_page_config(page_title="YouTube Music Metadata Extractor", layout="centered")
+
+st.title("🎵 Extrator de AlbumId")
+st.write("Insira o ID do vídeo para capturar o parâmetro do álbum.")
 
 # Input do usuário
-video_id = st.text_input("Digite o videoId / songId:", "ikFFVfObwss")
+video_id_input = st.text_input("Video ID / Song ID", value="ikFFVfObwss")
 
-if st.button("Buscar albumId"):
-    try:
-        # Busca detalhes da música
-        song_data = yt.get_song(video_id)
-
-        # Estrutura da resposta
-        video_details = song_data.get("videoDetails", {})
-        microformat = song_data.get("microformat", {})
-        player_microformat = microformat.get("microformatDataRenderer", {})
-
-        # Tentativa 1: via playlistId (geralmente começa com 'OLAK5uy_')
-        album_id = player_microformat.get("albumId")
-
-        # Tentativa 2: fallback via browseId (mais confiável)
-        if not album_id:
-            music_data = yt.get_watch_playlist(video_id)
-            tracks = music_data.get("tracks", [])
-
-            if tracks:
-                album_info = tracks[0].get("album", {})
-                album_id = album_info.get("id")
-
-        # Exibir resultados
-        st.subheader("Resultado:")
-        st.write("Título:", video_details.get("title"))
-        st.write("Autor:", video_details.get("author"))
-        st.write("albumId:", album_id)
-
-        if album_id:
-            st.success(f"Album ID encontrado: {album_id}")
+if st.button("Capturar albumId"):
+    with st.spinner("Buscando dados no YouTube Music..."):
+        res_album_id = get_album_id(video_id_input)
+        
+        if res_album_id:
+            st.success(f"**albumId encontrado:** `{res_album_id}`")
+            st.code(res_album_id, language=None)
+            
+            # Link direto para o álbum se quiser conferir
+            st.markdown(f"[Acessar Álbum no YT Music](https://music.youtube.com/browse/{res_album_id})")
         else:
-            st.error("Não foi possível encontrar o albumId.")
+            st.warning("Não foi possível encontrar um albumId vinculado a este ID.")
 
-    except Exception as e:
-        st.error(f"Erro ao buscar dados: {str(e)}")
+# Rodapé informativo
+st.divider()
+st.caption("Nota: Alguns vídeos/singles podem não ter um albumId associado se não fizerem parte de um álbum ou EP oficial.")
