@@ -48,9 +48,9 @@ if vivi_file:
         cols_dest = get_columns(conn_dest_check, "song")
         conn_dest_check.close()
 
-        # 1. Extração dos dados da origem
-        exclude_from_common = ['id', 'videoId', 'duration', 'durationSeconds']
-        common_cols = [c for c in cols_source if c in cols_dest and c not in exclude_from_common]
+        # 1. Extração da origem
+        exclude = ['id', 'videoId', 'duration', 'durationSeconds']
+        common_cols = [c for c in cols_source if c in cols_dest and c not in exclude]
         
         query_source = f"SELECT id, duration, {', '.join(common_cols)} FROM song"
         df_src = pd.read_sql_query(query_source, conn_source)
@@ -58,24 +58,24 @@ if vivi_file:
         lista_ids = pd.read_sql_query("SELECT songId FROM playlist_song_map ORDER BY rowid", conn_source)['songId'].tolist()
         conn_source.close()
 
-        # 2. Construção do DataFrame de Destino com valores padrão para NOT NULL
+        # 2. Construção do DataFrame de Destino
         df_dest = pd.DataFrame()
         df_dest['videoId'] = df_src['id']
         df_dest['duration'] = df_src['duration']
         df_dest['durationSeconds'] = (df_src['duration'] / 1000).fillna(0).astype(int)
         
-        # Mapeia colunas comuns
         for col in common_cols:
             df_dest[col] = df_src[col]
 
-        # 3. Preenchimento automático de colunas NOT NULL que faltam
-        # Adicione aqui qualquer outra coluna que der erro de NOT NULL
+        # 3. Valores padrão para evitar erros de NOT NULL
         default_values = {
             'isAvailable': 1,
             'isExplicit': 0,
             'isOffline': 0,
             'liked': 0,
-            'inLibrary': 1
+            'inLibrary': 1,
+            'likeStatus': 'INDIFFERENT', # Valor comum para status de curtida
+            'totalPlayTime': 0
         }
 
         for col_name, value in default_values.items():
